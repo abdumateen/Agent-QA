@@ -1,0 +1,325 @@
+<path>D:\Agent-QA\TEST_REPORT.md</path>
+<type>file</type>
+<content>
+1: # Agent QA Test Report
+2: 
+3: ## 1. Executive Summary
+4: 
+5: **Overall status: FAIL**
+6: 
+7: | Phase | Status | Summary |
+8: | --- | --- | --- |
+9: | 1. Environment Audit | FAIL | Python and Node met minimums; Poetry, Go, and Docker were unavailable. |
+10: | 2. Core Service | FAIL/BLOCKED | All Poetry commands failed because Poetry was not installed or on PATH. |
+11: | 3. pytest Plugin | FAIL/BLOCKED | Both Poetry commands failed because Poetry was unavailable. |
+12: | 4. Jest Plugin | FAIL | `npm install` succeeded, but the test suite and TypeScript build failed with source/type errors. |
+13: | 5. Go Plugin | FAIL/BLOCKED | Go was unavailable. |
+14: | 6. Integration & Runtime | FAIL/BLOCKED | The service could not start without Poetry; health and CLI checks failed; MCP import lacked `httpx`. |
+15: | 7. Docker Validation | FAIL/BLOCKED | Docker and Docker Compose were unavailable. |
+16: 
+17: No source fixes were applied. The project is not currently ready for a passing build or runtime validation.
+18: 
+19: ## 2. Environment Audit Results
+20: 
+21: Commands executed from `D:\Agent-QA`:
+22: 
+23: ### `python --version`
+24: 
+25: ```text
+26: Python 3.12.7
+27: ```
+28: 
+29: **PASS** — meets the Python 3.11+ requirement.
+30: 
+31: ### `node --version`
+32: 
+33: ```text
+34: v26.7.0
+35: ```
+36: 
+37: **PASS** — meets the Node 20+ requirement.
+38: 
+39: ### `go version`
+40: 
+41: ```text
+42: go : The term 'go' is not recognized as the name of a cmdlet, function, script file, or operable program.
+43: Exited with code 1
+44: ```
+45: 
+46: **FAIL** — Go is not installed or not on PATH.
+47: 
+48: ### `poetry --version`
+49: 
+50: ```text
+51: poetry : The term 'poetry' is not recognized as the name of a cmdlet, function, script file, or operable program.
+52: Exited with code 1
+53: ```
+54: 
+55: **FAIL** — Poetry is not installed or not on PATH.
+56: 
+57: ### `docker --version`
+58: 
+59: ```text
+60: docker : The term 'docker' is not recognized as the name of a cmdlet, function, script file, or operable program.
+61: Exited with code 1
+62: ```
+63: 
+64: **FAIL/BLOCKED** — Docker is not installed or not on PATH.
+65: 
+66: ## 3. Detailed Test Results
+67: 
+68: ## Phase 2: Core Service
+69: 
+70: Working directory: `D:\Agent-QA\core`
+71: 
+72: ### `poetry install`
+73: 
+74: **FAIL** — Poetry unavailable.
+75: 
+76: ```text
+77: poetry : The term 'poetry' is not recognized as the name of a cmdlet, function, script file, or operable program.
+78: Exited with code 1
+79: ```
+80: 
+81: ### `poetry run ruff check .`
+82: 
+83: **FAIL/BLOCKED** — Poetry unavailable.
+84: 
+85: ```text
+86: poetry : The term 'poetry' is not recognized as the name of a cmdlet, function, script file, or operable program.
+87: Exited with code 1
+88: ```
+89: 
+90: ### `poetry run mypy .`
+91: 
+92: **FAIL/BLOCKED** — Poetry unavailable.
+93: 
+94: ```text
+95: poetry : The term 'poetry' is not recognized as the name of a cmdlet, function, script file, or operable program.
+96: Exited with code 1
+97: ```
+98: 
+99: ### `poetry run pytest -v`
+100: 
+101: **FAIL/BLOCKED** — Poetry unavailable.
+102: 
+103: ```text
+104: poetry : The term 'poetry' is not recognized as the name of a cmdlet, function, script file, or operable program.
+105: Exited with code 1
+106: ```
+107: 
+108: The core test suite did not execute.
+109: 
+110: ## Phase 3: pytest Plugin
+111: 
+112: Working directory: `D:\Agent-QA\plugins\pytest-agent-qa`
+113: 
+114: ### `poetry install`
+115: 
+116: **FAIL/BLOCKED** — Poetry unavailable.
+117: 
+118: ### `poetry run pytest -v`
+119: 
+120: **FAIL/BLOCKED** — Poetry unavailable.
+121: 
+122: Both commands returned the same command-not-found error shown in Phase 2. The pytest plugin test suite did not execute.
+123: 
+124: ## Phase 4: Jest Plugin
+125: 
+126: Working directory: `D:\Agent-QA\plugins\jest-agent-qa`
+127: 
+128: ### `npm install`
+129: 
+130: **PASS** — dependencies installed successfully.
+131: 
+132: Relevant output:
+133: 
+134: ```text
+135: added 312 packages in 53s
+136: 39 packages are looking for funding
+137: ```
+138: 
+139: Warnings reported:
+140: 
+141: ```text
+142: npm warn deprecated inflight@1.0.6
+143: npm warn deprecated glob@7.2.3
+144: ```
+145: 
+146: ### `npm test` (first invocation)
+147: 
+148: The first test command was started concurrently with installation and failed because the local binaries were not yet available:
+149: 
+150: ```text
+151: 'jest' is not recognized as an internal or external command,
+152: operable program or batch file.
+153: Exited with code 1
+154: ```
+155: 
+156: The command was rerun after installation completed.
+157: 
+158: ### `npm test` (rerun after installation)
+159: 
+160: **FAIL** — TypeScript test compilation error.
+161: 
+162: ```text
+163: tests/reporter.test.ts:17:3 - error TS2322: Type '{ ancestorTitles: Array<string>; duration: number | null; failureDetails?: unknown[] | undefined; failureMessages: Array<string>; fullName: string; invocations: number; location: Callsite | null; numPassingAsserts: number; retryReasons: Array<string>; status: Status; title: string; }' is not assignable to type 'AssertionResult'.
+164: Types of property 'failureDetails' are incompatible.
+165: Type 'unknown[] | undefined' is not assignable to type 'unknown[]'.
+166: Type 'undefined' is not assignable to type 'unknown[]'.
+167: 
+168: Test Suites: 1 failed, 1 total
+169: Tests:       0 total
+170: Exited with code 1
+171: ```
+172: 
+173: ### `npm run build`
+174: 
+175: **FAIL** — TypeScript compilation errors.
+176: 
+177: ```text
+178: src/client.ts(141,7): error TS2322: Type 'string | undefined' is not assignable to type 'JsonValue'.
+179: src/client.ts(166,9): error TS2322: Type 'number | undefined' is not assignable to type 'JsonValue'.
+180: src/index.ts(16,3): error TS2300: Duplicate identifier 'AgentQAClientOptions'.
+181: src/index.ts(17,3): error TS2300: Duplicate identifier 'ContractInput'.
+182: src/index.ts(18,3): error TS2300: Duplicate identifier 'FixtureInput'.
+183: src/index.ts(19,3): error TS2300: Duplicate identifier 'JsonObject'.
+184: src/index.ts(22,3): error TS2300: Duplicate identifier 'MemoryRecord'.
+185: src/index.ts(49,15): error TS2300: Duplicate identifier 'AgentQAClientOptions'.
+186: src/index.ts(50,15): error TS2300: Duplicate identifier 'ContractInput'.
+187: src/index.ts(50,30): error TS2300: Duplicate identifier 'FixtureInput'.
+188: src/index.ts(50,44): error TS2300: Duplicate identifier 'JsonObject'.
+189: src/index.ts(50,56): error TS2300: Duplicate identifier 'MemoryRecord'.
+190: src/reporter.ts(66,37): error TS2345: Argument of type 'number | null | undefined' is not assignable to parameter of type 'number | null'.
+191: Type 'undefined' is not assignable to type 'number | null'.
+192: Exited with code 1
+193: ```
+194: 
+195: ### `npm run typecheck`
+196: 
+197: **FAIL** — returned the same TypeScript errors as `npm run build`.
+198: 
+199: ## Phase 5: Go Plugin
+200: 
+201: Working directory: `D:\Agent-QA\plugins\go-agent-qa`
+202: 
+203: ### `go mod tidy`
+204: 
+205: **FAIL/BLOCKED**:
+206: 
+207: ```text
+208: go : The term 'go' is not recognized as the name of a cmdlet, function, script file, or operable program.
+209: Exited with code 1
+210: ```
+211: 
+212: ### `go test ./... -v`
+213: 
+214: **FAIL/BLOCKED** — Go was unavailable, so tests did not execute.
+215: 
+216: ## Phase 6: Integration & Runtime Validation
+217: 
+218: ### Start service: `poetry run agent-qa serve`
+219: 
+220: **FAIL/BLOCKED** — Poetry unavailable.
+221: 
+222: ### Health check
+223: 
+224: Command executed after a three-second wait using PowerShell:
+225: 
+226: ```text
+227: Invoke-RestMethod http://127.0.0.1:8765/v1/health
+228: ```
+229: 
+230: Result:
+231: 
+232: ```text
+233: Unable to connect to the remote server
+234: Exited with code 1
+235: ```
+236: 
+237: The required `{"status":"ok"}` response was not received.
+238: 
+239: ### CLI: `poetry run agent-qa version`
+240: 
+241: **FAIL/BLOCKED** — Poetry unavailable.
+242: 
+243: ### MCP startup probe
+244: 
+245: A temporary `mcp_startup_probe.py` was created under `core`, executed, and deleted. Its import probe failed:
+246: 
+247: ```text
+248: Traceback (most recent call last):
+249:   File "D:\Agent-QA\core\mcp_startup_probe.py", line 1, in <module>
+250:     import agent_qa.mcp_server
+251:   File "D:\Agent-QA\core\agent_qa\mcp_server.py", line 8, in <module>
+252:     import httpx
+253: ModuleNotFoundError: No module named 'httpx'
+254: Exited with code 1
+255: ```
+256: 
+257: No service process was started, so there was no process to terminate.
+258: 
+259: ## Phase 7: Docker Validation
+260: 
+261: ### `docker-compose build`
+262: 
+263: **FAIL/BLOCKED** — `docker-compose` unavailable.
+264: 
+265: ### `docker-compose up -d`
+266: 
+267: **FAIL/BLOCKED** — `docker-compose` unavailable.
+268: 
+269: ### Docker health check
+270: 
+271: PowerShell health check after a five-second wait failed with:
+272: 
+273: ```text
+274: Unable to connect to the remote server
+275: Exited with code 1
+276: ```
+277: 
+278: ### `docker-compose down`
+279: 
+280: **FAIL/BLOCKED** — `docker-compose` unavailable.
+281: 
+282: The equivalent `docker compose build`, `docker compose up -d`, and `docker compose down` commands were also attempted and were blocked because the `docker` executable was unavailable.
+283: 
+284: ## 4. Integration Test Results
+285: 
+286: The core HTTP service could not be started because Poetry was unavailable and Python runtime dependencies such as `httpx` were not installed in the active interpreter. Therefore, the health endpoint, CLI version command, and MCP startup could not be validated successfully.
+287: 
+288: The Docker integration path was not testable because Docker was not installed or not on PATH.
+289: 
+290: ## 5. Bugs Found and Fixes Applied
+291: 
+292: ### Bugs found
+293: 
+294: 1. **Environment/tooling:** Poetry is unavailable, blocking all Poetry-managed Python installation, lint, type-check, and test commands.
+295: 2. **Environment/tooling:** Go is unavailable, blocking Go module and test validation.
+296: 3. **Environment/tooling:** Docker and Docker Compose are unavailable, blocking container validation.
+297: 4. **Python runtime dependencies:** The active interpreter cannot import `httpx` while loading the MCP server.
+298: 5. **TypeScript duplicate exports:** `src/index.ts` declares and re-exports `AgentQAClientOptions`, `ContractInput`, `FixtureInput`, `JsonObject`, and `MemoryRecord` in conflicting ways.
+299: 6. **TypeScript JSON typing:** `src/client.ts` passes possibly undefined `string` and `number` values where `JsonValue` is required.
+300: 7. **Reporter duration typing:** `src/reporter.ts` passes `number | null | undefined` to a function accepting only `number | null`.
+301: 8. **Jest test fixture typing:** `tests/reporter.test.ts` provides optional `failureDetails`, while the installed Jest type requires it to be present.
+302: 9. **Documentation completeness:** `README.md`, `CONTRIBUTING.md`, `examples/jest_example/README.md`, and `examples/go_example/README.md` are currently zero-byte files.
+303: 
+304: ### Fixes applied
+305: 
+306: **None.** Per the testing instructions, no core logic was modified because the failures require project changes rather than minor syntax corrections.
+307: 
+308: The `npm install` command created/updated the local Node installation artifacts (`node_modules` and `package-lock.json`) as part of the requested test procedure. The temporary MCP probe file was deleted after execution.
+309: 
+310: ## 6. Recommendations
+311: 
+312: 1. Install Poetry and run `poetry install` in `core`, `plugins/pytest-agent-qa`, and `cli`.
+313: 2. Install Go 1.22+ and ensure `go.exe` is on PATH.
+314: 3. Install Docker Desktop and ensure both `docker` and Compose are available.
+315: 4. Resolve the TypeScript duplicate exports and strict-nullability errors, then rerun `npm run typecheck`, `npm run build`, and `npm test` sequentially.
+316: 5. Make the Jest test fixture satisfy the installed `AssertionResult` type, or pin compatible Jest type versions.
+317: 6. Install Python dependencies through Poetry so `httpx`, FastAPI, pytest, Ruff, and mypy are available in the managed environments.
+318: 7. Populate the zero-byte documentation files before release validation.
+319: 8. Rerun the complete test plan from a clean checkout, including service health, CLI, MCP, and Docker checks.
+
+(End of file - total 319 lines)
+</content>

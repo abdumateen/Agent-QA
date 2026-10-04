@@ -1,0 +1,287 @@
+<path>D:\Agent-QA\plugins\pytest-agent-qa\pytest_agent_qa\plugin.py</path>
+<type>file</type>
+<content>
+1: """pytest hooks and helper fixture for Agent QA."""
+2: 
+3: from __future__ import annotations
+4: 
+5: import logging
+6: import time
+7: from collections.abc import Generator
+8: from dataclasses import dataclass
+9: from typing import Any
+10: 
+11: import pytest
+12: from _pytest.config import Config
+13: from _pytest.fixtures import FixtureRequest
+14: from _pytest.nodes import Item
+15: from _pytest.reports import TestReport
+16: from pytest import CallInfo
+17: from pytest import StashKey
+18: 
+19: from pytest_agent_qa.client import (
+20:     AgentQAClient,
+21:     JsonObject,
+22:     PluginClientError,
+23: )
+24: 
+25: logger = logging.getLogger("pytest_agent_qa")
+26: 
+27: _START_KEY: StashKey[float] = StashKey[float]()
+28: _REPORTS_KEY: StashKey[list[TestReport]] = StashKey[list[TestReport]]()
+29: _FAILURE_SENT_KEY: StashKey[bool] = StashKey[bool]()
+30: _CLIENT_KEY: StashKey[AgentQAClient] = StashKey[AgentQAClient]()
+31: _DISABLED_KEY: StashKey[bool] = StashKey[bool]()
+32: 
+33: 
+34: @dataclass
+35: class AgentQAMemory:
+36:     """Convenience methods for storing test-related memory."""
+37: 
+38:     client: AgentQAClient
+39: 
+40:     def remember_fixture(
+41:         self,
+42:         name: str,
+43:         fixture_type: str,
+44:         content: JsonObject,
+45:         tags: list[str] | None = None,
+46:     ) -> JsonObject:
+47:         """Create or replace a fixture."""
+48:         return self.client.remember_fixture(
+49:             name=name,
+50:             fixture_type=fixture_type,
+51:             content=content,
+52:             tags=tags,
+53:         )
+54: 
+55:     def get_fixture(
+56:         self,
+57:         name: str,
+58:         fixture_type: str | None = None,
+59:     ) -> JsonObject:
+60:         """Retrieve a fixture by name."""
+61:         return self.client.get_fixture(name, fixture_type)
+62: 
+63:     def remember_contract(
+64:         self,
+65:         endpoint: str,
+66:         method: str,
+67:         request_schema: JsonObject,
+68:         response_schema: JsonObject,
+69:         status_code: int,
+70:         tags: list[str] | None = None,
+71:     ) -> JsonObject:
+72:         """Create or replace an API contract."""
+73:         return self.client.remember_contract(
+74:             endpoint=endpoint,
+75:             method=method,
+76:             request_schema=request_schema,
+77:             response_schema=response_schema,
+78:             status_code=status_code,
+79:             tags=tags,
+80:         )
+81: 
+82:     def get_contract(
+83:         self,
+84:         endpoint: str,
+85:         method: str,
+86:         status_code: int | None = None,
+87:     ) -> JsonObject:
+88:         """Retrieve an API contract."""
+89:         return self.client.get_contract(endpoint, method, status_code)
+90: 
+91: 
+92: def pytest_addoption(parser: pytest.Parser) -> None:
+93:     """Register Agent QA command-line options."""
+94:     group = parser.getgroup("agent-qa")
+95:     group.addoption(
+96:         "--agent-qa-url",
+97:         action="store",
+98:         default=None,
+99:         help="Core service URL used by the pytest integration.",
+100:     )
+101:     group.addoption(
+102:         "--agent-qa-disable",
+103:         action="store_true",
+104:         default=False,
+105:         help="Disable Agent QA test-run and failure recording.",
+106:     )
+107: 
+108: 
+109: def pytest_configure(config: Config) -> None:
+110:     """Initialize one HTTP client for the pytest session."""
+111:     disabled = bool(config.getoption("--agent-qa-disable"))
+112:     config.stash[_DISABLED_KEY] = disabled
+113:     if disabled:
+114:         return
+115: 
+116:     base_url = config.getoption("--agent-qa-url")
+117:     config.stash[_CLIENT_KEY] = AgentQAClient(base_url=base_url)
+118: 
+119: 
+120: @pytest.fixture(name="agent_qa")
+121: def agent_qa_fixture(request: FixtureRequest) -> AgentQAMemory:
+122:     """Provide helper methods for storing fixtures and API contracts."""
+123:     config = request.config
+124:     if config.stash.get(_DISABLED_KEY, False):
+125:         raise RuntimeError(
+126:             "The agent_qa fixture is unavailable when --agent-qa-disable is set."
+127:         )
+128:     client = config.stash.get(_CLIENT_KEY)
+129:     if client is None:
+130:         base_url = config.getoption("--agent-qa-url")
+131:         client = AgentQAClient(base_url=base_url)
+132:         config.stash[_CLIENT_KEY] = client
+133:     return AgentQAMemory(client)
+134: 
+135: 
+136: @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+137: def pytest_runtest_protocol(
+138:     item: Item,
+139:     nextitem: Item | None,
+140: ) -> Generator[None, None, None]:
+141:     """Record one result after pytest completes the full test protocol."""
+142:     if item.config.stash.get(_DISABLED_KEY, False):
+143:         yield
+144:         return
+145: 
+146:     item.stash[_START_KEY] = time.perf_counter()
+147:     item.stash[_REPORTS_KEY] = []
+148:     item.stash[_FAILURE_SENT_KEY] = False
+149: 
+150:     yield
+151: 
+152:     reports = item.stash.get(_REPORTS_KEY, [])
+153:     duration = max(0.0, time.perf_counter() - item.stash[_START_KEY])
+154:     status_value = _test_status(reports)
+155:     error_message = _run_error_message(reports)
+156:     client = _get_client(item.config)
+157: 
+158:     try:
+159:         client.record_test_run(
+160:             test_name=item.nodeid,
+161:             framework="pytest",
+162:             run_status=status_value,
+163:             duration=duration,
+164:             error_message=error_message,
+165:         )
+166:     except PluginClientError as exc:
+167:         _log_client_failure("test run", item.nodeid, exc)
+168: 
+169: 
+170: @pytest.hookimpl(hookwrapper=True)
+171: def pytest_runtest_makereport(
+172:     item: Item,
+173:     call: CallInfo[Any],
+174: ) -> Generator[None, None, None]:
+175:     """Collect reports and send the first failure diagnosis."""
+176:     outcome = yield
+177:     report = outcome.get_result()
+178:     reports = item.stash.setdefault(_REPORTS_KEY, [])
+179:     reports.append(report)
+180: 
+181:     if not report.failed or item.stash.get(_FAILURE_SENT_KEY, False):
+182:         return
+183:     if item.config.stash.get(_DISABLED_KEY, False):
+184:         return
+185: 
+186:     item.stash[_FAILURE_SENT_KEY] = True
+187:     client = _get_client(item.config)
+188:     error_message = _error_message(call, report)
+189:     stack_trace = _stack_trace(call, report)
+190: 
+191:     try:
+192:         client.remember_failure(
+193:             test_name=item.nodeid,
+194:             error_message=error_message,
+195:             stack_trace=stack_trace,
+196:             root_cause="Unclassified test failure",
+197:             fix="Fix not recorded",
+198:         )
+199:     except PluginClientError as exc:
+200:         _log_client_failure("failure", item.nodeid, exc)
+201: 
+202: 
+203: def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+204:     """Log the completed pytest session without changing its exit status."""
+205:     if session.config.stash.get(_DISABLED_KEY, False):
+206:         return
+207:     logger.debug(
+208:         "pytest_session_finished",
+209:         extra={"exitstatus": exitstatus},
+210:     )
+211: 
+212: 
+213: def _get_client(config: Config) -> AgentQAClient:
+214:     client = config.stash.get(_CLIENT_KEY)
+215:     if client is None:
+216:         base_url = config.getoption("--agent-qa-url")
+217:         client = AgentQAClient(base_url=base_url)
+218:         config.stash[_CLIENT_KEY] = client
+219:     return client
+220: 
+221: 
+222: def _test_status(reports: list[TestReport]) -> str:
+223:     """Map pytest reports to the core service status vocabulary."""
+224:     if any(report.failed and report.when in {"setup", "teardown"} for report in reports):
+225:         return "error"
+226:     if any(report.failed for report in reports):
+227:         return "failed"
+228:     if any(report.skipped for report in reports):
+229:         return "skipped"
+230:     return "passed"
+231: 
+232: 
+233: def _run_error_message(reports: list[TestReport]) -> str | None:
+234:     """Return the first failure summary suitable for a test-run record."""
+235:     for report in reports:
+236:         if report.failed:
+237:             message = str(report.longrepr).strip()
+238:             return message or "Test failed"
+239:     return None
+240: 
+241: 
+242: def _error_message(call: CallInfo[Any], report: TestReport) -> str:
+243:     """Extract an exception message without losing a report-only failure."""
+244:     if call.excinfo is not None:
+245:         message = str(call.excinfo.value).strip()
+246:         if message:
+247:             return message
+248:     text = str(report.longrepr).strip()
+249:     return text or "Test failed"
+250: 
+251: 
+252: def _stack_trace(call: CallInfo[Any], report: TestReport) -> str:
+253:     """Extract the complete available failure representation."""
+254:     if call.excinfo is not None:
+255:         formatted = str(call.excinfo.getrepr()).strip()
+256:         if formatted:
+257:             return formatted
+258:     formatted_report = str(report.longrepr).strip()
+259:     return formatted_report or "No stack trace was provided."
+260: 
+261: 
+262: def _log_client_failure(operation: str, test_name: str, error: Exception) -> None:
+263:     logger.warning(
+264:         "agent_qa_request_failed",
+265:         extra={
+266:             "operation": operation,
+267:             "test_name": test_name,
+268:             "error_type": type(error).__name__,
+269:         },
+270:     )
+271: 
+272: 
+273: __all__ = [
+274:     "AgentQAMemory",
+275:     "agent_qa_fixture",
+276:     "pytest_addoption",
+277:     "pytest_configure",
+278:     "pytest_runtest_makereport",
+279:     "pytest_runtest_protocol",
+280:     "pytest_sessionfinish",
+281: ]
+
+(End of file - total 281 lines)
+</content>

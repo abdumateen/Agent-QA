@@ -1,0 +1,83 @@
+default_language_version:
+  python: python3.11
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+        args:
+          - --markdown-linebreak-ext=md
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.10
+    hooks:
+      - id: ruff
+        args:
+          - --fix
+      - id: ruff-format
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.45.0
+    hooks:
+      - id: markdownlint
+        files: \.(md|markdown)$
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.2
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: mypy-core
+        name: mypy core
+        entry: bash -c 'cd core && poetry run mypy .'
+        language: system
+        pass_filenames: false
+        files: ^core/.*\.py$
+
+      - id: mypy-cli
+        name: mypy cli
+        entry: bash -c 'cd cli && poetry run mypy .'
+        language: system
+        pass_filenames: false
+        files: ^cli/.*\.py$
+
+      - id: mypy-pytest-plugin
+        name: mypy pytest plugin
+        entry: bash -c 'cd plugins/pytest-agent-qa && poetry run mypy .'
+        language: system
+        pass_filenames: false
+        files: ^plugins/pytest-agent-qa/.*\.py$
+
+      - id: typescript-typecheck
+        name: TypeScript typecheck
+        entry: npm run typecheck
+        language: system
+        pass_filenames: false
+        files: ^plugins/jest-agent-qa/.*\.(ts|js|json)$
+        args:
+          - --prefix
+          - plugins/jest-agent-qa
+
+      - id: gofmt
+        name: gofmt
+        entry: bash -c 'test -z "$(gofmt -l plugins/go-agent-qa)"'
+        language: system
+        pass_filenames: false
+        files: ^plugins/go-agent-qa/.*\.go$
+
+      - id: go-test
+        name: go test
+        entry: bash -c 'cd plugins/go-agent-qa && go test ./...'
+        language: system
+        pass_filenames: false
+        files: ^plugins/go-agent-qa/.*\.(go|mod)$

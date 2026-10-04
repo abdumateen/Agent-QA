@@ -1,0 +1,113 @@
+name: agent-qa
+
+# Host networking preserves the fixed 127.0.0.1 service address.
+# Supported on Linux and Docker Desktop with host networking enabled.
+# Do not add published ports or change either listener to a wildcard address.
+x-service-defaults: &service-defaults
+  image: agent-qa-core:0.1.0
+  build:
+    context: ./core
+    dockerfile: Dockerfile
+    target: runtime
+  network_mode: host
+  init: true
+  restart: unless-stopped
+  read_only: true
+  user: "10001:10001"
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 128
+  stop_grace_period: 15s
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=16m,mode=1777
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  core:
+    <<: *service-defaults
+    command: ["agent-qa-core"]
+    environment:
+      AGENT_QA_DB_PATH: /home/agentqa/.agent-qa/memory.db
+      AGENT_QA_LOG_DIR: /home/agentqa/.agent-qa/logs
+      AGENT_QA_LOG_LEVEL: "${AGENT_QA_LOG_LEVEL:-INFO}"
+      AGENT_QA_FLAKY_THRESHOLD: "${AGENT_QA_FLAKY_THRESHOLD:-0.3}"
+      AGENT_QA_SQLITE_BUSY_TIMEOUT_MS: "5000"
+    volumes:
+      - core-data:/home/agentqa/.agent-qa
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys
+          import httpx
+
+          with httpx.Client(
+              timeout=5.0,
+              transport=httpx.HTTPTransport(retries=1),
+              trust_env=False,
+          ) as client:
+              response = client.get("http://127.0.0.1:8765/health")
+              response.raise_for_status()
+              healthy = response.json() == {
+                  "status": "ok",
+                  "version": "0.1.0",
+              }
+          sys.exit(0 if healthy else 1)
+      interval: 30s
+      timeout: 12s
+      start_period: 20s
+      retries: 3
+
+  mcp:
+    <<: *service-defaults
+    command: ["agent-qa-mcp"]
+    depends_on:
+      core:
+        condition: service_healthy
+    environment:
+      AGENT_QA_MCP_TRANSPORT: sse
+      AGENT_QA_MCP_PORT: "8766"
+      AGENT_QA_LOG_DIR: /home/agentqa/.agent-qa/logs
+      AGENT_QA_LOG_LEVEL: "${AGENT_QA_LOG_LEVEL:-INFO}"
+    volumes:
+      - mcp-logs:/home/agentqa/.agent-qa/logs
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys
+          import httpx
+
+          with httpx.Client(
+              timeout=5.0,
+              transport=httpx.HTTPTransport(retries=1),
+              trust_env=False,
+          ) as client:
+              with client.stream(
+                  "GET",
+                  "http://127.0.0.1:8766/sse",
+                  headers={"Accept": "text/event-stream"},
+              ) as response:
+                  response.raise_for_status()
+                  healthy = response.headers.get(
+                      "content-type", ""
+                  ).startswith("text/event-stream")
+          sys.exit(0 if healthy else 1)
+      interval: 30s
+      timeout: 12s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  core-data:
+  mcp-logs:

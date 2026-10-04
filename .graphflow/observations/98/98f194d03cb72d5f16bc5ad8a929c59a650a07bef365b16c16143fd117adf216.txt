@@ -1,0 +1,446 @@
+<path>D:\Agent-QA\core\agent_qa\api.py</path>
+<type>file</type>
+<content>
+1: """REST interface and loopback-only entry point for the core service."""
+2: 
+3: import sqlite3
+4: from collections.abc import AsyncIterator
+5: from contextlib import asynccontextmanager
+6: from typing import Annotated
+7: 
+8: import uvicorn
+9: from fastapi import Depends, FastAPI, Path, Query, Request, status
+10: from fastapi.concurrency import run_in_threadpool
+11: from fastapi.exceptions import RequestValidationError
+12: from fastapi.responses import JSONResponse
+13: from pydantic import ValidationError
+14: from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
+15: 
+16: from agent_qa import __version__
+17: from agent_qa.config import CORE_HOST, CORE_PORT, Settings, get_settings
+18: from agent_qa.logging_config import configure_logging, get_logger
+19: from agent_qa.models import (
+20:     ContractCreate,
+21:     FailureCreate,
+22:     FailureResolve,
+23:     FixtureCreate,
+24:     HealthResponse,
+25:     QuarantineRequest,
+26:     TestRunCreate,
+27: )
+28: from agent_qa.storage import MemoryNotFoundError, MemoryRecord, Storage
+29: 
+30: 
+31: def _get_storage(request: Request) -> Storage:
+32:     storage = getattr(request.app.state, "storage", None)
+33:     if not isinstance(storage, Storage):
+34:         raise RuntimeError("Storage is not initialized.")
+35:     return storage
+36: 
+37: 
+38: StorageDependency = Annotated[Storage, Depends(_get_storage)]
+39: ResultLimit = Annotated[int, Query(ge=1, le=1000)]
+40: RequiredPath = Annotated[str, Path(min_length=1)]
+41: OptionalFilter = Annotated[str | None, Query(min_length=1)]
+42: 
+43: 
+44: def create_app(settings: Settings | None = None) -> FastAPI:
+45:     """Build an application whose database is opened only during its lifespan.
+46: 
+47:     Passing settings explicitly supports isolated databases and log directories
+48:     in tests. Callers must enter the application's lifespan before making
+49:     requests.
+50:     """
+51:     config = settings if settings is not None else get_settings()
+52: 
+53:     @asynccontextmanager
+54:     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+55:         configure_logging(config)
+56:         logger = get_logger(__name__)
+57:         storage = await run_in_threadpool(Storage, settings=config)
+58:         application.state.storage = storage
+59:         logger.info(
+60:             "core_service_started",
+61:             host=CORE_HOST,
+62:             port=CORE_PORT,
+63:             version=__version__,
+64:         )
+65:         try:
+66:             yield
+67:         finally:
+68:             application.state.storage = None
+69:             await run_in_threadpool(storage.close)
+70:             logger.info("core_service_stopped")
+71: 
+72:     application = FastAPI(
+73:         title="Agent QA",
+74:         description="Persistent local memory for test data and execution history.",
+75:         version=__version__,
+76:         lifespan=lifespan,
+77:         redirect_slashes=False,
+78:     )
+79:     application.state.settings = config
+80:     application.state.storage = None
+81: 
+82:     @application.exception_handler(MemoryNotFoundError)
+83:     async def handle_not_found(
+84:         request: Request, exc: MemoryNotFoundError
+85:     ) -> JSONResponse:
+86:         return JSONResponse(
+87:             status_code=status.HTTP_404_NOT_FOUND,
+88:             content={"detail": str(exc)},
+89:         )
+90: 
+91:     @application.exception_handler(RequestValidationError)
+92:     async def handle_request_validation(
+93:         request: Request, exc: RequestValidationError
+94:     ) -> JSONResponse:
+95:         return _validation_response(exc)
+96: 
+97:     @application.exception_handler(ValidationError)
+98:     async def handle_model_validation(
+99:         request: Request, exc: ValidationError
+100:     ) -> JSONResponse:
+101:         return _validation_response(exc)
+102: 
+103:     @application.exception_handler(ValueError)
+104:     async def handle_invalid_value(
+105:         request: Request, exc: ValueError
+106:     ) -> JSONResponse:
+107:         return JSONResponse(
+108:             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+109:             content={"detail": str(exc)},
+110:         )
+111: 
+112:     @application.exception_handler(IntegrityError)
+113:     async def handle_integrity_error(
+114:         request: Request, exc: IntegrityError
+115:     ) -> JSONResponse:
+116:         get_logger(__name__).warning("database_integrity_conflict")
+117:         return JSONResponse(
+118:             status_code=status.HTTP_409_CONFLICT,
+119:             content={"detail": "The operation conflicts with stored data."},
+120:         )
+121: 
+122:     @application.exception_handler(OperationalError)
+123:     async def handle_operational_error(
+124:         request: Request, exc: OperationalError
+125:     ) -> JSONResponse:
+126:         error_code = getattr(exc.orig, "sqlite_errorcode", None)
+127:         if isinstance(error_code, int) and (error_code & 0xFF) in (
+128:             sqlite3.SQLITE_BUSY,
+129:             sqlite3.SQLITE_LOCKED,
+130:         ):
+131:             get_logger(__name__).warning("database_busy")
+132:             return JSONResponse(
+133:                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+134:                 content={"detail": "The database is busy. Try again shortly."},
+135:                 headers={"Retry-After": "1"},
+136:             )
+137:         get_logger(__name__).error("database_operation_failed")
+138:         return JSONResponse(
+139:             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+140:             content={"detail": "The database operation could not be completed."},
+141:         )
+142: 
+143:     @application.exception_handler(SQLAlchemyError)
+144:     async def handle_database_error(
+145:         request: Request, exc: SQLAlchemyError
+146:     ) -> JSONResponse:
+147:         get_logger(__name__).error("database_error")
+148:         return JSONResponse(
+149:             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+150:             content={"detail": "The database operation could not be completed."},
+151:         )
+152: 
+153:     @application.exception_handler(Exception)
+154:     async def handle_unexpected_error(
+155:         request: Request, exc: Exception
+156:     ) -> JSONResponse:
+157:         get_logger(__name__).error(
+158:             "unhandled_request_error",
+159:             exception_type=type(exc).__name__,
+160:         )
+161:         return JSONResponse(
+162:             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+163:             content={"detail": "An internal server error occurred."},
+164:         )
+165: 
+166:     @application.get(
+167:         "/health",
+168:         response_model=HealthResponse,
+169:         include_in_schema=False,
+170:     )
+171:     @application.get(
+172:         "/v1/health",
+173:         response_model=HealthResponse,
+174:         operation_id="health",
+175:         tags=["Health"],
+176:     )
+177:     def health(storage: StorageDependency) -> HealthResponse:
+178:         """Verify database connectivity and report the service version."""
+179:         return HealthResponse.model_validate(storage.health())
+180: 
+181:     @application.get(
+182:         "/v1/fixtures",
+183:         response_model=list[MemoryRecord],
+184:         operation_id="list_fixtures",
+185:         tags=["Fixtures"],
+186:     )
+187:     def list_fixtures(
+188:         storage: StorageDependency,
+189:         tag: OptionalFilter = None,
+190:         limit: ResultLimit = 50,
+191:     ) -> list[MemoryRecord]:
+192:         """List recent fixtures, optionally filtering by an exact tag."""
+193:         return storage.list_fixtures(tag=tag, limit=limit)
+194: 
+195:     @application.get(
+196:         "/v1/fixtures/{name:path}",
+197:         response_model=MemoryRecord,
+198:         operation_id="get_fixture",
+199:         tags=["Fixtures"],
+200:     )
+201:     def get_fixture(
+202:         name: RequiredPath,
+203:         storage: StorageDependency,
+204:         type: OptionalFilter = None,
+205:     ) -> MemoryRecord:
+206:         """Retrieve a named fixture and optionally require its exact type."""
+207:         return storage.get_fixture(name=name, type=type)
+208: 
+209:     @application.post(
+210:         "/v1/fixtures",
+211:         response_model=MemoryRecord,
+212:         status_code=status.HTTP_201_CREATED,
+213:         operation_id="remember_fixture",
+214:         tags=["Fixtures"],
+215:     )
+216:     def remember_fixture(
+217:         body: FixtureCreate, storage: StorageDependency
+218:     ) -> MemoryRecord:
+219:         """Remember a fixture, replacing the contents of an existing name."""
+220:         return storage.remember_fixture(
+221:             name=body.name,
+222:             type=body.type,
+223:             content=body.content,
+224:             tags=body.tags,
+225:         )
+226: 
+227:     @application.get(
+228:         "/v1/contracts/{endpoint:path}/{method}",
+229:         response_model=MemoryRecord,
+230:         operation_id="get_api_contract",
+231:         tags=["Contracts"],
+232:     )
+233:     def get_api_contract(
+234:         endpoint: RequiredPath,
+235:         method: RequiredPath,
+236:         storage: StorageDependency,
+237:         status_code: Annotated[int | None, Query(ge=100, le=599)] = None,
+238:     ) -> MemoryRecord:
+239:         """Retrieve a contract using the endpoint exactly as it was stored.
+240: 
+241:         The endpoint path parameter may itself contain slashes. Clients should
+242:         percent-encode the endpoint as one parameter, including its leading
+243:         slash. Without a status code, the lowest stored status code is selected.
+244:         """
+245:         return storage.get_api_contract(
+246:             endpoint=endpoint,
+247:             method=method,
+248:             status_code=status_code,
+249:         )
+250: 
+251:     @application.post(
+252:         "/v1/contracts",
+253:         response_model=MemoryRecord,
+254:         status_code=status.HTTP_201_CREATED,
+255:         operation_id="remember_api_contract",
+256:         tags=["Contracts"],
+257:     )
+258:     def remember_api_contract(
+259:         body: ContractCreate, storage: StorageDependency
+260:     ) -> MemoryRecord:
+261:         """Remember a validated Draft 2020-12 request and response contract."""
+262:         return storage.remember_api_contract(
+263:             endpoint=body.endpoint,
+264:             method=body.method,
+265:             request_schema=body.request_schema,
+266:             response_schema=body.response_schema,
+267:             status_code=body.status_code,
+268:             tags=body.tags,
+269:         )
+270: 
+271:     @application.post(
+272:         "/v1/failures",
+273:         response_model=MemoryRecord,
+274:         status_code=status.HTTP_201_CREATED,
+275:         operation_id="remember_failure",
+276:         tags=["Failures"],
+277:     )
+278:     def remember_failure(
+279:         body: FailureCreate, storage: StorageDependency
+280:     ) -> MemoryRecord:
+281:         """Record a distinct failure and any available diagnostic information."""
+282:         return storage.remember_failure(
+283:             test_name=body.test_name,
+284:             error_message=body.error_message,
+285:             stack_trace=body.stack_trace,
+286:             root_cause=body.root_cause,
+287:             fix=body.fix,
+288:             tags=body.tags,
+289:         )
+290: 
+291:     @application.post(
+292:         "/v1/failures/{failure_id}/resolve",
+293:         response_model=MemoryRecord,
+294:         operation_id="resolve_failure",
+295:         tags=["Failures"],
+296:     )
+297:     def resolve_failure(
+298:         failure_id: Annotated[int, Path(gt=0)],
+299:         body: FailureResolve,
+300:         storage: StorageDependency,
+301:     ) -> MemoryRecord:
+302:         """Resolve a recorded failure with a nonempty diagnosis and fix."""
+303:         return storage.resolve_failure(
+304:             failure_id=failure_id,
+305:             root_cause=body.root_cause,
+306:             fix=body.fix,
+307:         )
+308: 
+309:     @application.get(
+310:         "/v1/failures/{test_name:path}",
+311:         response_model=list[MemoryRecord],
+312:         operation_id="get_failure",
+313:         tags=["Failures"],
+314:     )
+315:     def get_failure(
+316:         test_name: RequiredPath,
+317:         storage: StorageDependency,
+318:         error_pattern: Annotated[str | None, Query()] = None,
+319:     ) -> list[MemoryRecord]:
+320:         """List failures, optionally matching a literal error-message substring."""
+321:         return storage.get_failure(test_name=test_name, error_pattern=error_pattern)
+322: 
+323:     @application.get(
+324:         "/v1/suggest-test",
+325:         response_model=list[MemoryRecord],
+326:         operation_id="suggest_test",
+327:         tags=["Search"],
+328:     )
+329:     def suggest_test(
+330:         description: Annotated[str, Query(min_length=1, max_length=4096)],
+331:         storage: StorageDependency,
+332:         limit: ResultLimit = 10,
+333:     ) -> list[MemoryRecord]:
+334:         """Find relevant stored memories for a proposed test description."""
+335:         return storage.suggest_test(description=description, limit=limit)
+336: 
+337:     @application.post(
+338:         "/v1/test-runs",
+339:         response_model=MemoryRecord,
+340:         status_code=status.HTTP_201_CREATED,
+341:         operation_id="record_test_run",
+342:         tags=["Test runs"],
+343:     )
+344:     def record_test_run(
+345:         body: TestRunCreate, storage: StorageDependency
+346:     ) -> MemoryRecord:
+347:         """Record a test execution and atomically refresh its failure ratio."""
+348:         return storage.record_test_run(
+349:             test_name=body.test_name,
+350:             framework=body.framework,
+351:             status=body.status,
+352:             duration=body.duration,
+353:             error_message=body.error_message,
+354:         )
+355: 
+356:     @application.get(
+357:         "/v1/flaky",
+358:         response_model=list[MemoryRecord],
+359:         operation_id="get_flaky_tests",
+360:         tags=["Flaky tests"],
+361:     )
+362:     def get_flaky_tests(
+363:         storage: StorageDependency,
+364:         threshold: Annotated[
+365:             float, Query(ge=0.0, le=1.0, allow_inf_nan=False)
+366:         ] = config.flaky_threshold,
+367:     ) -> list[MemoryRecord]:
+368:         """List histories meeting the supplied or configured failure threshold."""
+369:         return storage.get_flaky_tests(threshold=threshold)
+370: 
+371:     @application.post(
+372:         "/v1/quarantine",
+373:         response_model=MemoryRecord,
+374:         operation_id="quarantine_test",
+375:         tags=["Flaky tests"],
+376:     )
+377:     def quarantine_test(
+378:         body: QuarantineRequest, storage: StorageDependency
+379:     ) -> MemoryRecord:
+380:         """Persist quarantine metadata without automatically skipping tests."""
+381:         return storage.quarantine_test(
+382:             test_name=body.test_name,
+383:             framework=body.framework,
+384:             reason=body.reason,
+385:         )
+386: 
+387:     @application.get(
+388:         "/v1/search",
+389:         response_model=list[MemoryRecord],
+390:         operation_id="search_memory",
+391:         tags=["Search"],
+392:     )
+393:     def search_memory(
+394:         query: Annotated[str, Query(min_length=1, max_length=4096)],
+395:         storage: StorageDependency,
+396:         limit: ResultLimit = 20,
+397:     ) -> list[MemoryRecord]:
+398:         """Search indexed memories using ranked, plain-text matching."""
+399:         return storage.search_memory(query=query, limit=limit)
+400: 
+401:     return application
+402: 
+403: 
+404: def _validation_response(
+405:     exc: RequestValidationError | ValidationError,
+406: ) -> JSONResponse:
+407:     details = [
+408:         {
+409:             "loc": list(error["loc"]),
+410:             "type": error["type"],
+411:             "msg": error["msg"],
+412:         }
+413:         for error in exc.errors()
+414:     ]
+415:     return JSONResponse(
+416:         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+417:         content={"detail": details},
+418:     )
+419: 
+420: 
+421: app = create_app()
+422: 
+423: 
+424: def main() -> None:
+425:     """Run the core service exclusively on 127.0.0.1:8765."""
+426:     configure_logging(get_settings())
+427:     uvicorn.run(
+428:         app,
+429:         host=CORE_HOST,
+430:         port=CORE_PORT,
+431:         log_config=None,
+432:         access_log=False,
+433:         proxy_headers=False,
+434:         server_header=False,
+435:         workers=1,
+436:     )
+437: 
+438: 
+439: if __name__ == "__main__":
+440:     main()
+
+(End of file - total 440 lines)
+</content>

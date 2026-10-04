@@ -1,0 +1,603 @@
+<path>D:\Agent-QA\core\agent_qa\storage.py</path>
+<type>file</type>
+<content>
+1: """Transactional persistence for the local test memory database."""
+2: 
+3: import math
+4: import sqlite3
+5: from pathlib import Path
+6: from typing import TypeAlias
+7: 
+8: from pydantic import JsonValue, TypeAdapter
+9: from sqlalchemy import Connection, Engine, URL, event, text
+10: from sqlalchemy.engine import RowMapping
+11: from sqlalchemy.pool import NullPool
+12: from sqlmodel import create_engine
+13: 
+14: from agent_qa.config import Settings, get_settings
+15: from agent_qa.logging_config import get_logger
+16: from agent_qa.migrations import apply_migrations
+17: from agent_qa.models import (
+18:     ContractCreate,
+19:     FailureCreate,
+20:     FailureResolve,
+21:     FixtureCreate,
+22:     HttpMethod,
+23:     PositiveId,
+24:     QuarantineRequest,
+25:     TestRunCreate,
+26: )
+27: from agent_qa.utils import (
+28:     build_fts_query,
+29:     canonical_json,
+30:     deserialize_tags,
+31:     format_timestamp,
+32:     normalize_tags,
+33:     parse_json_object,
+34:     require_nonempty,
+35:     serialize_tags,
+36:     sha256_content,
+37:     validate_limit,
+38: )
+39: 
+40: MemoryRecord: TypeAlias = dict[str, JsonValue]
+41: 
+42: _RECORD_ADAPTER = TypeAdapter(dict[str, JsonValue])
+43: _METHOD_ADAPTER = TypeAdapter[str](HttpMethod)
+44: _ID_ADAPTER = TypeAdapter[int](PositiveId)
+45: 
+46: _TIMESTAMP_FIELDS = frozenset(
+47:     {
+48:         "created_at",
+49:         "updated_at",
+50:         "resolved_at",
+51:         "timestamp",
+52:         "last_updated",
+53:         "quarantined_at",
+54:     }
+55: )
+56: 
+57: _SEARCH_RECORD_QUERIES = {
+58:     "fixtures": text("SELECT * FROM fixtures WHERE id = :id"),
+59:     "api_contracts": text("SELECT * FROM api_contracts WHERE id = :id"),
+60:     "failures": text("SELECT * FROM failures WHERE id = :id"),
+61: }
+62: 
+63: 
+64: class MemoryNotFoundError(LookupError):
+65:     """A requested memory record does not exist."""
+66: 
+67: 
+68: class Storage:
+69:     """Own a SQLite engine and expose the service's persistence operations.
+70: 
+71:     Every operation uses its own connection. Writes, full-text trigger updates,
+72:     and flaky-test aggregation commit together or roll back together.
+73:     Connections are not retained between operations.
+74:     """
+75: 
+76:     def __init__(
+77:         self,
+78:         db_path: str | Path | None = None,
+79:         *,
+80:         settings: Settings | None = None,
+81:     ) -> None:
+82:         """Create the database directory, configure SQLite, and apply migrations."""
+83:         self.settings = settings if settings is not None else get_settings()
+84:         if db_path is None:
+85:             self.db_path = self.settings.db_path
+86:         else:
+87:             validated = Settings.model_validate(
+88:                 {**self.settings.model_dump(), "db_path": db_path}
+89:             )
+90:             self.db_path = validated.db_path
+91: 
+92:         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+93:         self.engine: Engine = create_engine(
+94:             URL.create("sqlite", database=str(self.db_path)),
+95:             connect_args={
+96:                 "check_same_thread": False,
+97:                 "timeout": self.settings.sqlite_busy_timeout_ms / 1000.0,
+98:             },
+99:             poolclass=NullPool,
+100:         )
+101:         event.listen(self.engine, "connect", _configure_connection)
+102:         self._closed = False
+103:         self._logger = get_logger(__name__)
+104: 
+105:         try:
+106:             apply_migrations(self.engine)
+107:         except Exception:
+108:             self.engine.dispose()
+109:             self._closed = True
+110:             raise
+111: 
+112:     def close(self) -> None:
+113:         """Release engine resources and reject subsequent operations."""
+114:         if not self._closed:
+115:             self.engine.dispose()
+116:             self._closed = True
+117: 
+118:     def __enter__(self) -> "Storage":
+119:         """Return this storage instance for deterministic resource cleanup."""
+120:         self._ensure_open()
+121:         return self
+122: 
+123:     def __exit__(
+124:         self,
+125:         exc_type: object,
+126:         exc_value: object,
+127:         traceback: object,
+128:     ) -> None:
+129:         """Close this instance when leaving its context."""
+130:         self.close()
+131: 
+132:     def get_fixture(self, name: str, type: str | None = None) -> MemoryRecord:
+133:         """Retrieve a fixture by its unique name and optional exact type."""
+134:         self._ensure_open()
+135:         name = require_nonempty(name, "Fixture name")
+136:         fixture_type = require_nonempty(type, "Fixture type") if type is not None else None
+137:         with self.engine.connect() as connection:
+138:             row = connection.execute(
+139:                 text(
+140:                     """
+141:                     SELECT * FROM fixtures
+142:                     WHERE name = :name AND (:type IS NULL OR type = :type)
+143:                     """
+144:                 ),
+145:                 {"name": name, "type": fixture_type},
+146:             ).mappings().one_or_none()
+147:             return _required_record(row, "Fixture not found.")
+148: 
+149:     def remember_fixture(
+150:         self,
+151:         name: str,
+152:         type: str,
+153:         content: dict[str, JsonValue],
+154:         tags: list[str] | None = None,
+155:     ) -> MemoryRecord:
+156:         """Insert or replace fixture content while preserving its identity."""
+157:         self._ensure_open()
+158:         request = FixtureCreate(name=name, type=type, content=content, tags=tags)
+159:         encoded = canonical_json(request.content)
+160:         with self.engine.begin() as connection:
+161:             connection.execute(
+162:                 text(
+163:                     """
+164:                     INSERT INTO fixtures (name, type, content, hash, tags)
+165:                     VALUES (:name, :type, :content, :hash, :tags)
+166:                     ON CONFLICT(name) DO UPDATE SET
+167:                         type = excluded.type,
+168:                         content = excluded.content,
+169:                         hash = excluded.hash,
+170:                         tags = excluded.tags,
+171:                         updated_at = CURRENT_TIMESTAMP
+172:                     """
+173:                 ),
+174:                 {
+175:                     "name": request.name,
+176:                     "type": request.type,
+177:                     "content": encoded,
+178:                     "hash": sha256_content(encoded),
+179:                     "tags": serialize_tags(request.tags),
+180:                 },
+181:             )
+182:             row = connection.execute(
+183:                 text("SELECT * FROM fixtures WHERE name = :name"),
+184:                 {"name": request.name},
+185:             ).mappings().one()
+186:             result = _record(row)
+187:         self._logger.info("fixture_remembered", fixture_id=result["id"])
+188:         return result
+189: 
+190:     def list_fixtures(
+191:         self, tag: str | None = None, limit: int = 50
+192:     ) -> list[MemoryRecord]:
+193:         """List recent fixtures, optionally matching one complete tag."""
+194:         self._ensure_open()
+195:         limit = validate_limit(limit)
+196:         normalized_tag = normalize_tags([tag])[0] if tag is not None else None
+197:         with self.engine.connect() as connection:
+198:             rows = connection.execute(
+199:                 text(
+200:                     """
+201:                     SELECT * FROM fixtures
+202:                     WHERE :tag IS NULL
+203:                        OR instr(',' || coalesce(tags, '') || ',', ',' || :tag || ',') > 0
+204:                     ORDER BY updated_at DESC, id DESC
+205:                     LIMIT :limit
+206:                     """
+207:                 ),
+208:                 {"tag": normalized_tag, "limit": limit},
+209:             ).mappings().all()
+210:             return [_record(row) for row in rows]
+211: 
+212:     def get_api_contract(
+213:         self,
+214:         endpoint: str,
+215:         method: str,
+216:         status_code: int | None = None,
+217:     ) -> MemoryRecord:
+218:         """Retrieve a contract, choosing the lowest status code when omitted."""
+219:         from agent_qa.models import StatusCode
+220: 
+221:         self._ensure_open()
+222:         endpoint = require_nonempty(endpoint, "Endpoint")
+223:         normalized_method = _METHOD_ADAPTER.validate_python(method)
+224:         if status_code is not None:
+225:             status_code = TypeAdapter[int](StatusCode).validate_python(status_code)
+226:         with self.engine.connect() as connection:
+227:             row = connection.execute(
+228:                 text(
+229:                     """
+230:                     SELECT * FROM api_contracts
+231:                     WHERE endpoint = :endpoint AND method = :method
+232:                       AND (:status_code IS NULL OR status_code = :status_code)
+233:                     ORDER BY status_code ASC, id ASC
+234:                     LIMIT 1
+235:                     """
+236:                 ),
+237:                 {
+238:                     "endpoint": endpoint,
+239:                     "method": normalized_method,
+240:                     "status_code": status_code,
+241:                 },
+242:             ).mappings().one_or_none()
+243:             return _required_record(row, "API contract not found.")
+244: 
+245:     def remember_api_contract(
+246:         self,
+247:         endpoint: str,
+248:         method: str,
+249:         request_schema: dict[str, JsonValue],
+250:         response_schema: dict[str, JsonValue],
+251:         status_code: int,
+252:         tags: list[str] | None = None,
+253:     ) -> MemoryRecord:
+254:         """Validate and upsert a Draft 2020-12 request and response contract."""
+255:         from agent_qa.contracts import validate_contract_schemas
+256: 
+257:         self._ensure_open()
+258:         request = ContractCreate(
+259:             endpoint=endpoint,
+260:             method=method,
+261:             request_schema=request_schema,
+262:             response_schema=response_schema,
+263:             status_code=status_code,
+264:             tags=tags,
+265:         )
+266:         validate_contract_schemas(request.request_schema, request.response_schema)
+267:         parameters = {
+268:             "endpoint": request.endpoint,
+269:             "method": request.method,
+270:             "request_schema": canonical_json(request.request_schema),
+271:             "response_schema": canonical_json(request.response_schema),
+272:             "status_code": request.status_code,
+273:             "tags": serialize_tags(request.tags),
+274:         }
+275:         with self.engine.begin() as connection:
+276:             connection.execute(
+277:                 text(
+278:                     """
+279:                     INSERT INTO api_contracts (
+280:                         endpoint, method, request_schema, response_schema, status_code, tags
+281:                     )
+282:                     VALUES (
+283:                         :endpoint, :method, :request_schema, :response_schema, :status_code, :tags
+284:                     )
+285:                     ON CONFLICT(endpoint, method, status_code) DO UPDATE SET
+286:                         request_schema = excluded.request_schema,
+287:                         response_schema = excluded.response_schema,
+288:                         tags = excluded.tags,
+289:                         updated_at = CURRENT_TIMESTAMP
+290:                     """
+291:                 ),
+292:                 parameters,
+293:             )
+294:             row = connection.execute(
+295:                 text(
+296:                     """
+297:                     SELECT * FROM api_contracts
+298:                     WHERE endpoint = :endpoint AND method = :method
+299:                       AND status_code = :status_code
+300:                     """
+301:                 ),
+302:                 parameters,
+303:             ).mappings().one()
+304:             result = _record(row)
+305:         self._logger.info("contract_remembered", contract_id=result["id"])
+306:         return result
+307: 
+308:     def remember_failure(
+309:         self,
+310:         test_name: str,
+311:         error_message: str,
+312:         stack_trace: str,
+313:         root_cause: str,
+314:         fix: str,
+315:         tags: list[str] | None = None,
+316:     ) -> MemoryRecord:
+317:         """Append an unresolved failure without merging distinct occurrences."""
+318:         self._ensure_open()
+319:         request = FailureCreate(
+320:             test_name=test_name,
+321:             error_message=error_message,
+322:             stack_trace=stack_trace,
+323:             root_cause=root_cause,
+324:             fix=fix,
+325:             tags=tags,
+326:         )
+327:         parameters = {
+328:             **request.model_dump(exclude={"tags"}),
+329:             "tags": serialize_tags(request.tags),
+330:         }
+331:         with self.engine.begin() as connection:
+332:             connection.execute(
+333:                 text(
+334:                     """
+335:                     INSERT INTO failures (
+336:                         test_name, error_message, stack_trace, root_cause, fix, tags
+337:                     )
+338:                     VALUES (
+339:                         :test_name, :error_message, :stack_trace, :root_cause, :fix, :tags
+340:                     )
+341:                     """
+342:                 ),
+343:                 parameters,
+344:             )
+345:             row = connection.execute(
+346:                 text("SELECT * FROM failures WHERE id = last_insert_rowid()")
+347:             ).mappings().one()
+348:             result = _record(row)
+349:         self._logger.info("failure_remembered", failure_id=result["id"])
+350:         return result
+351: 
+352:     def get_failure(
+353:         self, test_name: str, error_pattern: str | None = None
+354:     ) -> list[MemoryRecord]:
+355:         """List failures using an optional case-sensitive literal substring."""
+356:         self._ensure_open()
+357:         test_name = require_nonempty(test_name, "Test name")
+358:         with self.engine.connect() as connection:
+359:             rows = connection.execute(
+360:                 text(
+361:                     """
+362:                     SELECT * FROM failures
+363:                     WHERE test_name = :test_name
+364:                       AND (:pattern IS NULL OR instr(error_message, :pattern) > 0)
+365:                     ORDER BY created_at DESC, id DESC
+366:                     """
+367:                 ),
+368:                 {"test_name": test_name, "pattern": error_pattern},
+369:             ).mappings().all()
+370:             return [_record(row) for row in rows]
+371: 
+372:     def resolve_failure(
+373:         self, failure_id: int, root_cause: str, fix: str
+374:     ) -> MemoryRecord:
+375:         """Resolve a failure, preserving the timestamp of its first resolution."""
+376:         self._ensure_open()
+377:         failure_id = _ID_ADAPTER.validate_python(failure_id)
+378:         request = FailureResolve(root_cause=root_cause, fix=fix)
+379:         with self.engine.begin() as connection:
+380:             connection.execute(
+381:                 text(
+382:                     """
+383:                     UPDATE failures
+384:                     SET root_cause = :root_cause,
+385:                         fix = :fix,
+386:                         resolved = 1,
+387:                         resolved_at = coalesce(resolved_at, CURRENT_TIMESTAMP)
+388:                     WHERE id = :id
+389:                     """
+390:                 ),
+391:                 {"id": failure_id, "root_cause": request.root_cause, "fix": request.fix},
+392:             )
+393:             row = connection.execute(
+394:                 text("SELECT * FROM failures WHERE id = :id"),
+395:                 {"id": failure_id},
+396:             ).mappings().one_or_none()
+397:             result = _required_record(row, "Failure not found.")
+398:         self._logger.info("failure_resolved", failure_id=failure_id)
+399:         return result
+400: 
+401:     def record_test_run(
+402:         self,
+403:         test_name: str,
+404:         framework: str,
+405:         status: str,
+406:         duration: float,
+407:         error_message: str | None = None,
+408:     ) -> MemoryRecord:
+409:         """Record an execution and update its flaky statistics atomically."""
+410:         from agent_qa.flaky_detector import update_flaky_test
+411: 
+412:         self._ensure_open()
+413:         request = TestRunCreate.model_validate(
+414:             {
+415:                 "test_name": test_name,
+416:                 "framework": framework,
+417:                 "status": status,
+418:                 "duration": duration,
+419:                 "error_message": error_message,
+420:             }
+421:         )
+422:         with self.engine.begin() as connection:
+423:             connection.execute(
+424:                 text(
+425:                     """
+426:                     INSERT INTO test_runs (
+427:                         test_name, framework, status, duration, error_message
+428:                     )
+429:                     VALUES (
+430:                         :test_name, :framework, :status, :duration, :error_message
+431:                     )
+432:                     """
+433:                 ),
+434:                 request.model_dump(),
+435:             )
+436:             row = connection.execute(
+437:                 text("SELECT * FROM test_runs WHERE id = last_insert_rowid()")
+438:             ).mappings().one()
+439:             result = _record(row)
+440:             update_flaky_test(connection, request.test_name, request.framework)
+441:         self._logger.info("test_run_recorded", test_run_id=result["id"], status=request.status)
+442:         return result
+443: 
+444:     def get_flaky_tests(self, threshold: float = 0.3) -> list[MemoryRecord]:
+445:         """List nonempty test histories whose failure ratio meets the threshold."""
+446:         self._ensure_open()
+447:         if (
+448:             isinstance(threshold, bool)
+449:             or not math.isfinite(threshold)
+450:             or not 0.0 <= threshold <= 1.0
+451:         ):
+452:             raise ValueError("Threshold must be a finite number between 0 and 1.")
+453:         with self.engine.connect() as connection:
+454:             rows = connection.execute(
+455:                 text(
+456:                     """
+457:                     SELECT * FROM flaky_tests
+458:                     WHERE run_count > 0 AND flaky_score >= :threshold
+459:                     ORDER BY flaky_score DESC, run_count DESC, test_name ASC, framework ASC
+460:                     """
+461:                 ),
+462:                 {"threshold": threshold},
+463:             ).mappings().all()
+464:             return [_record(row) for row in rows]
+465: 
+466:     def quarantine_test(
+467:         self, test_name: str, framework: str, reason: str
+468:     ) -> MemoryRecord:
+469:         """Persist a quarantine decision for a test with recorded history.
+470: 
+471:         Quarantine is metadata, not an instruction to silently skip tests.
+472:         Repeating the operation updates the reason and decision timestamp.
+473:         """
+474:         self._ensure_open()
+475:         request = QuarantineRequest(test_name=test_name, framework=framework, reason=reason)
+476:         parameters = request.model_dump()
+477:         with self.engine.begin() as connection:
+478:             connection.execute(
+479:                 text(
+480:                     """
+481:                     UPDATE flaky_tests
+482:                     SET quarantined = 1,
+483:                         quarantine_reason = :reason,
+484:                         quarantined_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+485:                         last_updated = CURRENT_TIMESTAMP
+486:                     WHERE test_name = :test_name AND framework = :framework
+487:                     """
+488:                 ),
+489:                 parameters,
+490:             )
+491:             row = connection.execute(
+492:                 text(
+493:                     """
+494:                     SELECT * FROM flaky_tests
+495:                     WHERE test_name = :test_name AND framework = :framework
+496:                     """
+497:                 ),
+498:                 parameters,
+499:             ).mappings().one_or_none()
+500:             result = _required_record(row, "No recorded history exists for this test.")
+501:         self._logger.info("test_quarantined", framework=request.framework)
+502:         return result
+503: 
+504:     def search_memory(self, query: str, limit: int = 20) -> list[MemoryRecord]:
+505:         """Return ranked memories with their source, relevance score, and record."""
+506:         self._ensure_open()
+507:         expression = build_fts_query(query)
+508:         limit = validate_limit(limit)
+509:         results: list[MemoryRecord] = []
+510:         with self.engine.begin() as connection:
+511:             # A physical read transaction keeps index hits and records consistent.
+512:             connection.exec_driver_sql("BEGIN")
+513:             hits = connection.execute(
+514:                 text(
+515:                     """
+516:                     SELECT source, source_id, bm25(memory_fts) AS rank
+517:                     FROM memory_fts
+518:                     WHERE memory_fts MATCH :query
+519:                     ORDER BY rank ASC, source ASC, CAST(source_id AS INTEGER) ASC
+520:                     LIMIT :limit
+521:                     """
+522:                 ),
+523:                 {"query": expression, "limit": limit},
+524:             ).mappings().all()
+525:             for hit in hits:
+526:                 source = str(hit["source"])
+527:                 statement = _SEARCH_RECORD_QUERIES.get(source)
+528:                 if statement is None:
+529:                     raise RuntimeError("Full-text index contains an unknown memory source.")
+530:                 row = connection.execute(
+531:                     statement, {"id": int(hit["source_id"])}
+532:                 ).mappings().one_or_none()
+533:                 if row is None:
+534:                     raise RuntimeError("Full-text index references a missing memory record.")
+535:                 results.append(
+536:                     {
+537:                         "source": source,
+538:                         "score": -float(hit["rank"]),
+539:                         "record": _record(row),
+540:                     }
+541:                 )
+542:         return results
+543: 
+544:     def suggest_test(self, description: str, limit: int = 10) -> list[MemoryRecord]:
+545:         """Find existing fixtures, contracts, and failures relevant to a description."""
+546:         return self.search_memory(description, limit)
+547: 
+548:     def health(self) -> MemoryRecord:
+549:         """Verify database connectivity and return the public health response."""
+550:         from agent_qa import __version__
+551: 
+552:         self._ensure_open()
+553:         with self.engine.connect() as connection:
+554:             connection.execute(text("SELECT 1")).scalar_one()
+555:         return {"status": "ok", "version": __version__}
+556: 
+557:     def _ensure_open(self) -> None:
+558:         if self._closed:
+559:             raise RuntimeError("Storage is closed.")
+560: 
+561: 
+562: def _configure_connection(dbapi_connection: object, connection_record: object) -> None:
+563:     if not isinstance(dbapi_connection, sqlite3.Connection):
+564:         raise TypeError("Expected a SQLite connection.")
+565:     cursor = dbapi_connection.cursor()
+566:     try:
+567:         cursor.execute("PRAGMA journal_mode = WAL")
+568:         cursor.execute("PRAGMA foreign_keys = ON")
+569:         cursor.execute("PRAGMA synchronous = NORMAL")
+570:     finally:
+571:         cursor.close()
+572: 
+573: 
+574: def _required_record(row: RowMapping | None, message: str) -> MemoryRecord:
+575:     if row is None:
+576:         raise MemoryNotFoundError(message)
+577:     return _record(row)
+578: 
+579: 
+580: def _record(row: RowMapping) -> MemoryRecord:
+581:     data = dict(row)
+582:     for field in ("content", "request_schema", "response_schema"):
+583:         if field in data:
+584:             data[field] = parse_json_object(str(data[field]))
+585:     if "tags" in data:
+586:         stored_tags = data["tags"]
+587:         data["tags"] = deserialize_tags(
+588:             str(stored_tags) if stored_tags is not None else None
+589:         )
+590:     for field in _TIMESTAMP_FIELDS:
+591:         value = data.get(field)
+592:         if value is not None:
+593:             data[field] = format_timestamp(str(value))
+594:     for field in ("resolved", "quarantined"):
+595:         if field in data:
+596:             data[field] = bool(data[field])
+597:     return _RECORD_ADAPTER.validate_python(data, strict=True)
+
+(End of file - total 597 lines)
+</content>

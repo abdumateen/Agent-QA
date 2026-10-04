@@ -1,0 +1,165 @@
+## FAILED
+
+--- [current-session | 2026-10-03 15:51 | execute:shell] ---
+### 2026-10-03 21:21:37 [info     ] fixture_remembered             fixture_id=1
+
+2026-10-03 21:21:37 [info     ] fixture_remembered             fixture_id=1
+=========================== short test summary info ===========================
+FAILED tests/test_api.py::test_contract_rejects_invalid_schema - assert 'JSON...
+FAILED tests/test_storage.py::test_migration_failure_rolls_back_schema_changes
+FAILED tests/test_storage.py::test_failure_occurrences_remain_distinct - pyda...
+FAILED tests/test_storage.py::test_failure_filter_is_literal - pydantic_core....
+FAILED tests/test_storage.py::test_resolve_failure_updates_search_and_preserves_timestamp
+FAILED tests/test_storage.py::test_search_covers_all_memory_sources - pydanti...
+FAILED tests/test_storage.py::test_suggestions_reuse_ranked_memory_search - p...
+======================= 7 failed, 135 passed in 10.78s ========================
+
+
+--- [current-session | 2026-10-02 08:33 | D:\Agent-QA:D:\Agent-QA\TEST_REPORT.md] ---
+### Agent QA Test Report > 1. Executive Summary
+
+## 1. Executive Summary
+
+**Overall status: FAIL**
+
+| Phase | Status | Summary |
+| --- | --- | --- |
+| 1. Environment Audit | FAIL | Python and Node met minimums; Poetry, Go, and Docker were unavailable. |
+| 2. Core Service | FAIL/BLOCKED | All Poetry commands failed because Poetry was not installed or on PATH. |
+| 3. pytest Plugin | FAIL/BLOCKED | Both Poetry commands failed because Poetry was unavailable. |
+| 4. Jest Plugin | FAIL | `npm install` succeeded, but the test suite and TypeScript build failed with source/type errors. |
+| 5. Go Plugin | FAIL/BLOCKED | Go was unavailable. |
+| 6. Integration & Runtime | FAIL/BLOCKED | The service could not start without Poetry; health and CLI checks failed; MCP import lacked `httpx`. |
+| 7. Docker Validation | FAIL/BLOCKED | Docker and Docker Compose were unavailable. |
+
+No source fixes were applied. The project is not currently ready for a passing build or runtime validation.
+
+---
+
+## failed
+
+--- [current-session | 2026-10-03 15:51 | execute:shell] ---
+### 2026-10-03 21:21:37 [info     ] fixture_remembered             fixture_id=1
+
+2026-10-03 21:21:37 [info     ] fixture_remembered             fixture_id=1
+=========================== short test summary info ===========================
+FAILED tests/test_api.py::test_contract_rejects_invalid_schema - assert 'JSON...
+FAILED tests/test_storage.py::test_migration_failure_rolls_back_schema_changes
+FAILED tests/test_storage.py::test_failure_occurrences_remain_distinct - pyda...
+FAILED tests/test_storage.py::test_failure_filter_is_literal - pydantic_core....
+FAILED tests/test_storage.py::test_resolve_failure_updates_search_and_preserves_timestamp
+FAILED tests/test_storage.py::test_search_covers_all_memory_sources - pydanti...
+FAILED tests/test_storage.py::test_suggestions_reuse_ranked_memory_search - p...
+======================= 7 failed, 135 passed in 10.78s ========================
+
+
+--- [current-session | 2026-10-02 08:33 | D:\Agent-QA:D:\Agent-QA\TEST_REPORT.md] ---
+### Agent QA Test Report > 1. Executive Summary
+
+## 1. Executive Summary
+
+**Overall status: FAIL**
+
+| Phase | Status | Summary |
+| --- | --- | --- |
+| 1. Environment Audit | FAIL | Python and Node met minimums; Poetry, Go, and Docker were unavailable. |
+| 2. Core Service | FAIL/BLOCKED | All Poetry commands failed because Poetry was not installed or on PATH. |
+| 3. pytest Plugin | FAIL/BLOCKED | Both Poetry commands failed because Poetry was unavailable. |
+| 4. Jest Plugin | FAIL | `npm install` succeeded, but the test suite and TypeScript build failed with source/type errors. |
+| 5. Go Plugin | FAIL/BLOCKED | Go was unavailable. |
+| 6. Integration & Runtime | FAIL/BLOCKED | The service could not start without Poetry; health and CLI checks failed; MCP import lacked `httpx`. |
+| 7. Docker Validation | FAIL/BLOCKED | Docker and Docker Compose were unavailable. |
+
+No source fixes were applied. The project is not currently ready for a passing build or runtime validation.
+
+---
+
+## short test summary
+
+--- [current-session | 2026-10-03 15:51 | execute:shell] ---
+### ---------------------------- Captured stdout call -----------------------------
+
+---------------------------- Captured stdout call -----------------------------
+2026-10-03 21:21:37 [info     ] fixture_remembered             fixture_id=1
+2026-10-03 21:21:37 [info     ] contract_remembered            contract_id=1
+_________________ test_suggestions_reuse_ranked_memory_search _________________
+tests\test_storage.py:501: in test_suggestions_reuse_ranked_memory_search
+    _remember_failure(storage, "orders unavailable")
+tests\test_storage.py:49: in _remember_failure
+    return storage.remember_failure(
+agent_qa\storage.py:319: in remember_failure
+    request = FailureCreate(
+E   pydantic_core._pydantic_core.ValidationError: 2 validation errors for FailureCreate
+E   root_cause
+E     String should have at least 1 character [type=string_too_short, input_value='', input_type=str]
+E       For further information visit https://errors.pydantic.dev/2.13/v/string_too_short
+E   fix
+E     String should have at least 1 character [type=string_too_short, input_value='', input_type=str]
+E       For further information visit https://errors.pydantic.dev/2.13/v/string_too_short
+---------------------------- Captured stdout call -----------------------------
+2026-10-03 21:21:37 [info     ] fixture_remembered             fixture_id=1
+=========================== short test summary info ===========================
+
+--- [current-session | 2026-10-03 15:51 | execute:shell] ---
+### 2026-10-03 21:21:37 [info     ] fixture_remembered             fixture_id=1
+
+2026-10-03 21:21:37 [info     ] fixture_remembered             fixture_id=1
+=========================== short test summary info ===========================
+FAILED tests/test_api.py::test_contract_rejects_invalid_schema - assert 'JSON...
+FAILED tests/test_storage.py::test_migration_failure_rolls_back_schema_changes
+FAILED tests/test_storage.py::test_failure_occurrences_remain_distinct - pyda...
+FAILED tests/test_storage.py::test_failure_filter_is_literal - pydantic_core....
+FAILED tests/test_storage.py::test_resolve_failure_updates_search_and_preserves_timestamp
+FAILED tests/test_storage.py::test_search_covers_all_memory_sources - pydanti...
+FAILED tests/test_storage.py::test_suggestions_reuse_ranked_memory_search - p...
+======================= 7 failed, 135 passed in 10.78s ========================
+
+
+---
+
+## passed
+
+--- [current-session | 2026-10-03 15:51 | execute:shell] ---
+### tests/test_flaky_detector.py::test_storage_rejects_invalid_threshold[1.1] PASSED
+
+tests/test_flaky_detector.py::test_storage_rejects_invalid_threshold[1.1] PASSED [ 57%]
+tests/test_flaky_detector.py::test_storage_rejects_invalid_threshold[nan] PASSED [ 57%]
+tests/test_flaky_detector.py::test_storage_rejects_invalid_threshold[inf] PASSED [ 58%]
+tests/test_flaky_detector.py::test_storage_rejects_invalid_threshold[True] PASSED [ 59%]
+tests/test_storage.py::test_database_configuration PASSED                [ 59%]
+tests/test_storage.py::test_foreign_keys_enabled_on_each_connection PASSED [ 60%]
+tests/test_storage.py::test_migrations_are_idempotent PASSED             [ 61%]
+tests/test_storage.py::test_newer_schema_is_rejected_without_downgrade PASSED [ 61%]
+tests/test_storage.py::test_migration_failure_rolls_back_schema_changes FAILED [ 62%]
+tests/test_storage.py::test_fixture_round_trip PASSED                    [ 63%]
+tests/test_storage.py::test_fixture_upsert_preserves_identity PASSED     [ 64%]
+tests/test_storage.py::test_fixture_hash_ignores_object_key_order PASSED [ 64%]
+tests/test_storage.py::test_fixture_hash_preserves_list_order PASSED     [ 65%]
+tests/test_storage.py::test_empty_fixture_and_tags PASSED                [ 66%]
+tests/test_storage.py::test_fixture_survives_reopening PASSED            [ 66%]
+tests/test_storage.py::test_missing_fixture_and_type_mismatch PASSED     [ 67%]
+tests/test_storage.py::test_fixture_tag_filter_matches_whole_tags PASSED [ 68%]
+tests/test_storage.py::test_fixture_list_limit PASSED                    [ 69
+
+--- [current-session | 2026-10-03 15:51 | execute:shell] ---
+### tests/test_flaky_detector.py::test_is_flaky[10-2-0.3-False] PASSED       [ 44%]
+
+tests/test_flaky_detector.py::test_is_flaky[10-2-0.3-False] PASSED       [ 44%]
+tests/test_flaky_detector.py::test_is_flaky[10-10-1.0-True] PASSED       [ 45%]
+tests/test_flaky_detector.py::test_is_flaky[0-0-0.0-False] PASSED        [ 45%]
+tests/test_flaky_detector.py::test_is_flaky_rejects_invalid_threshold[-0.1] PASSED [ 46%]
+tests/test_flaky_detector.py::test_is_flaky_rejects_invalid_threshold[1.1] PASSED [ 47%]
+tests/test_flaky_detector.py::test_is_flaky_rejects_invalid_threshold[nan] PASSED [ 47%]
+tests/test_flaky_detector.py::test_is_flaky_rejects_invalid_threshold[inf] PASSED [ 48%]
+tests/test_flaky_detector.py::test_is_flaky_rejects_invalid_threshold[True] PASSED [ 49%]
+tests/test_flaky_detector.py::test_is_flaky_uses_configured_threshold PASSED [ 50%]
+tests/test_flaky_detector.py::test_update_flaky_test_aggregates_failed_and_error_runs PASSED [ 50%]
+tests/test_flaky_detector.py::test_update_flaky_test_requires_active_transaction PASSED [ 51%]
+tests/test_flaky_detector.py::test_update_flaky_test_requires_history PASSED [ 52%]
+tests/test_flaky_detector.py::test_update_flaky_test_requires_sqlite PASSED [ 52%]
+tests/test_flaky_detector.py::test_update_flaky_test_is_recomputable PASSED [ 53%]
+tests/test_flaky_detector.py::test_update_flaky_test_preserves_quarantine_fields PASSED [ 54%]
+tests/test_flaky_detector.py::test_frameworks_have_independent_aggregates PASSED [ 54%]
+tests/test_flaky_detector.py::test_storage_threshold_filters_aggregates PASSED [ 55%]
+
+> Throttle: call #1/8 in this window. 2 call(s) before soft cap. Prefer ctx_search(queries: [...]) array form for multi-query workloads — it counts as a single call.

@@ -1,0 +1,20 @@
+{
+  "sessions": {
+    "session-3807c79f-cffa-46c7-b362-6daa153737e3": {
+      "sessionId": "session-3807c79f-cffa-46c7-b362-6daa153737e3",
+      "rawBytes": 6468,
+      "visibleBytes": 6468,
+      "observations": 2,
+      "usedTokensEstimate": 1617,
+      "updatedAt": "2026-10-03T15:31:17.742Z"
+    },
+    "session-8f6fe3b6-b9f3-4362-9e19-83748bddfa78": {
+      "sessionId": "session-8f6fe3b6-b9f3-4362-9e19-83748bddfa78",
+      "rawBytes": 325258,
+      "visibleBytes": 216364,
+      "observations": 117,
+      "usedTokensEstimate": 54091,
+      "updatedAt": "2026-10-03T16:59:21.856Z"
+    }
+  }
+}

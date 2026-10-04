@@ -1,0 +1,51 @@
+{
+  "name": "jest-agent-qa",
+  "version": "0.1.0",
+  "description": "Jest integration for the Agent QA test memory service.",
+  "author": {
+    "name": "Agent QA Contributors",
+    "email": "maintainers@agent-qa.dev"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js"
+    },
+    "./reporter": {
+      "types": "./dist/reporter.d.ts",
+      "require": "./dist/reporter.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "require": "./dist/client.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "jest --runInBand",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "axios": "^1.8.4"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.13.10",
+    "jest": "^29.7.0",
+    "nock": "^14.0.1",
+    "ts-jest": "^29.2.6",
+    "typescript": "^5.4.5"
+  },
+  "peerDependencies": {
+    "jest": ">=29 <31"
+  }
+}
