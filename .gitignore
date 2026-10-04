@@ -41,6 +41,24 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Go
+*.exe
+*.test
+*.out
+vendor/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs / DB
+*.log
+*.db
+*.sqlite
+.env
+
 *.test
 *.prof
 coverage.out
