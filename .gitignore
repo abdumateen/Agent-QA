@@ -53,6 +53,9 @@ vendor/
 .DS_Store
 Thumbs.db
 
+# GraphFlow local state
+.graphflow/
+
 # Logs / DB
 *.log
 *.db
