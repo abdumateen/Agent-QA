@@ -121,8 +121,6 @@ def test_pytest_plugin_records_passing_test(pytester: pytest.Pytester) -> None:
             )
         )
         result = pytester.runpytest(
-            "-p",
-            "pytest_agent_qa.plugin",
             "--agent-qa-url",
             BASE_URL,
             "-q",
@@ -161,8 +159,6 @@ def test_pytest_plugin_records_failure_and_run(
             )
         )
         result = pytester.runpytest(
-            "-p",
-            "pytest_agent_qa.plugin",
             "--agent-qa-url",
             BASE_URL,
             "-q",
@@ -206,8 +202,6 @@ def test_pytest_plugin_supports_agent_qa_fixture(
             )
         )
         result = pytester.runpytest(
-            "-p",
-            "pytest_agent_qa.plugin",
             "--agent-qa-url",
             BASE_URL,
             "-q",
@@ -231,8 +225,6 @@ def test_pytest_plugin_can_be_disabled(pytester: pytest.Pytester) -> None:
             return_value=httpx.Response(201, json={"id": 1})
         )
         result = pytester.runpytest(
-            "-p",
-            "pytest_agent_qa.plugin",
             "--agent-qa-disable",
             "-q",
         )
@@ -253,8 +245,6 @@ def test_pytest_plugin_does_not_fail_test_when_service_is_down(
     )
 
     result = pytester.runpytest(
-        "-p",
-        "pytest_agent_qa.plugin",
         "--agent-qa-url",
         "http://127.0.0.1:1",
         "-q",

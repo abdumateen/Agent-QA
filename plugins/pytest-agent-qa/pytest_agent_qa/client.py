@@ -40,6 +40,10 @@ class AgentQAClient:
             raise ValueError("Timeout must be positive.")
         self.timeout = timeout
 
+    def health(self) -> JsonObject:
+        """Return the core service health response."""
+        return self._request_object("GET", "/v1/health")
+
     def record_test_run(
         self,
         test_name: str,

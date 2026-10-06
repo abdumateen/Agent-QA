@@ -179,10 +179,28 @@ def apply_migrations(engine: Engine) -> None:
             raise MigrationError(f"Unsupported database schema version: {current}.")
 
         if current == 0:
-            for statement in _TABLE_STATEMENTS:
-                connection.exec_driver_sql(statement)
-            for statement in _TRIGGER_STATEMENTS:
-                connection.exec_driver_sql(statement)
+            created_tables = (
+                "fixtures",
+                "api_contracts",
+                "failures",
+                "test_runs",
+                "flaky_tests",
+                "memory_fts",
+            )
+            applied: list[str] = []
+            try:
+                for statement, name in zip(
+                    _TABLE_STATEMENTS, created_tables, strict=True
+                ):
+                    connection.exec_driver_sql(statement)
+                    applied.append(name)
+                for statement in _TRIGGER_STATEMENTS:
+                    connection.exec_driver_sql(statement)
+            except Exception:
+                for name in reversed(applied):
+                    connection.exec_driver_sql(f'DROP TABLE IF EXISTS "{name}"')
+                connection.exec_driver_sql("PRAGMA user_version = 0")
+                raise
         else:
             connection.exec_driver_sql("PRAGMA user_version = 1")
 
