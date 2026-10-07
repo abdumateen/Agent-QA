@@ -110,22 +110,29 @@ def test_newer_schema_is_rejected_without_downgrade(storage: Storage) -> None:
 
 def test_migration_failure_rolls_back_schema_changes(settings: Settings) -> None:
     """A failed migration leaves neither partial tables nor an advanced version."""
+    import gc
     import sqlite3
 
     settings.db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(settings.db_path) as connection:
+    connection = sqlite3.connect(settings.db_path)
+    try:
         connection.execute("CREATE TABLE api_contracts (sentinel TEXT)")
         connection.execute(
             "INSERT INTO api_contracts (sentinel) VALUES (?)",
             ("preserve",),
         )
+        connection.commit()
+    finally:
+        connection.close()
 
     from sqlalchemy.exc import OperationalError
 
     with pytest.raises(OperationalError):
         Storage(settings=settings)
+    gc.collect()
 
-    with sqlite3.connect(settings.db_path) as connection:
+    connection = sqlite3.connect(settings.db_path)
+    try:
         assert connection.execute("PRAGMA user_version").fetchone() == (0,)
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE name = ?",
@@ -134,6 +141,9 @@ def test_migration_failure_rolls_back_schema_changes(settings: Settings) -> None
         assert connection.execute(
             "SELECT sentinel FROM api_contracts"
         ).fetchone() == ("preserve",)
+    finally:
+        connection.close()
+    gc.collect()
 
 
 def test_fixture_round_trip(storage: Storage) -> None:
