@@ -28,7 +28,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e core/
           pip install -e plugins/pytest-agent-qa/
-          pip install pytest respx ruff mypy httpx fastapi uvicorn sqlmodel pydantic typer structlog mcp
+          pip install "pytest>=8.3,<9.0" respx ruff mypy httpx fastapi uvicorn sqlmodel pydantic pydantic-settings jsonschema typer structlog mcp
 
       - name: Lint with ruff
         run: ruff check core/ plugins/pytest-agent-qa/ || true
@@ -38,7 +38,7 @@ jobs:
 
       - name: Run core tests
         working-directory: core
-        run: pytest tests/ -v
+        run: pytest tests/ -v -p no:agent-qa
 
       - name: Run pytest plugin tests
         working-directory: plugins/pytest-agent-qa
