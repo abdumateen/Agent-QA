@@ -47,6 +47,7 @@ class Settings(BaseSettings):
 
     mcp_transport: Literal["stdio", "sse"] = "stdio"
     mcp_port: int = Field(default=8766, ge=1024, le=65535)
+    license_key: str = ""
 
     @field_validator("db_path", "log_dir", mode="before")
     @classmethod

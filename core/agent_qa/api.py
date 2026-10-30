@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 
 from agent_qa import __version__
 from agent_qa.config import CORE_HOST, CORE_PORT, Settings, get_settings
+from agent_qa.licensing import require_pro_license
 from agent_qa.logging_config import configure_logging, get_logger
 from agent_qa.models import (
     ContractCreate,
@@ -397,6 +398,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> list[MemoryRecord]:
         """Search indexed memories using ranked, plain-text matching."""
         return storage.search_memory(query=query, limit=limit)
+
+    @application.post(
+        "/v1/sync/team",
+        operation_id="sync_team",
+        tags=["Pro"],
+        dependencies=[Depends(require_pro_license)],
+    )
+    def sync_team(payload: dict[str, object]) -> dict[str, str]:
+        """Placeholder for Pro-tier remote team sync."""
+        return {"status": "synced"}
+
+    @application.get(
+        "/v1/analytics/flaky-trends",
+        operation_id="get_flaky_trends",
+        tags=["Pro"],
+        dependencies=[Depends(require_pro_license)],
+    )
+    def get_flaky_trends() -> list[dict[str, object]]:
+        """Placeholder for Pro-tier flaky-test trend analytics."""
+        return [
+            {"test_name": "example", "window": "7d", "fail_ratio": 0.0},
+        ]
 
     return application
 

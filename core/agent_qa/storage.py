@@ -12,6 +12,7 @@ from sqlalchemy.pool import NullPool
 from sqlmodel import create_engine
 
 from agent_qa.config import Settings, get_settings
+from agent_qa.licensing import verify_license
 from agent_qa.logging_config import get_logger
 from agent_qa.migrations import apply_migrations
 from agent_qa.models import (
@@ -362,10 +363,18 @@ class Storage:
                     SELECT * FROM failures
                     WHERE test_name = :test_name
                       AND (:pattern IS NULL OR instr(error_message, :pattern) > 0)
+                      AND (
+                        :pro_tier = 1
+                        OR created_at >= datetime('now', '-7 days')
+                      )
                     ORDER BY created_at DESC, id DESC
                     """
                 ),
-                {"test_name": test_name, "pattern": error_pattern},
+                {
+                    "test_name": test_name,
+                    "pattern": error_pattern,
+                    "pro_tier": 1 if verify_license(self.settings.license_key) else 0,
+                },
             ).mappings().all()
             return [_record(row) for row in rows]
 

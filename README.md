@@ -266,6 +266,29 @@ authentication and authorization. Do not store credentials, tokens, private
 keys, cookies, or production secrets in fixtures, contracts, failure messages,
 stack traces, logs, or backups.
 
+## Pricing & Licensing
+
+Agent QA uses an open-core model. The Free tier is MIT-licensed and runs
+entirely on loopback. Pro unlocks team collaboration and longer history.
+
+| Feature | Free | Pro |
+| --- | --- | --- |
+| Local SQLite memory | Yes | Yes |
+| Fixtures, contracts, failures, search | Yes | Yes |
+| pytest, Jest, Go, CLI, MCP | Yes | Yes |
+| Failure history | Last 7 days | Unlimited |
+| Team sync (`POST /v1/sync/team`) | No | Yes |
+| Flaky analytics (`GET /v1/analytics/flaky-trends`) | No | Yes |
+
+Set a Pro key before starting the core service:
+
+```bash
+export AGENT_QA_LICENSE_KEY=aq_pro_your_key_here
+```
+
+Pro endpoints return `402 Payment Required` when the key is missing or invalid.
+Licenses are sold at https://agent-qa.dev/pricing.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, checks, and pull
