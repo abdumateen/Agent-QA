@@ -3,8 +3,8 @@ title: Agent QA
 emoji: 🧠
 colorFrom: indigo
 colorTo: purple
-sdk: docker
-app_port: 7860
+sdk: gradio
+app_file: app.py
 pinned: false
 ---
 
@@ -267,6 +267,36 @@ Transport-specific details and all fourteen available tools are documented in
 - [Deployment](docs/deployment.md) — configuration, Docker, backups, and
   operations.
 - [Security policy](SECURITY.md) — local-service and sensitive-data guidance.
+
+## Persistence
+
+Hugging Face Spaces on the free tier keep their disk **ephemeral**. The container
+filesystem, including the SQLite database at `AGENT_QA_DB_PATH` (default
+`~/.agent-qa/memory.db`), is wiped on every restart and rebuild. Treat everything
+written through the API or MCP server as lost when the Space restarts.
+
+Three ways to handle that:
+
+- **Accept ephemeral storage.** Fine for demos and throwaway fixtures. Data lives
+  for the lifetime of the running container only.
+- **Back up to a Dataset.** `agent_qa.persistence.backup_db()` takes a WAL-safe
+  snapshot of the database and, given a dataset repo id, uploads it:
+
+  ```bash
+  export AGENT_QA_BACKUP_REPO=<username>/agent-qa-backups
+  export HF_TOKEN=<token with write access>
+  python -c "from agent_qa.persistence import backup_db; print(backup_db())"
+  ```
+
+  Restore by copying the downloaded `memory.db` back to the `AGENT_QA_DB_PATH`
+  location before the service starts. Called with no repo id, the function only
+  writes a local snapshot, which is enough to pull the file off the Space once.
+- **Use an external database.** For durable writes, point the service at a hosted
+  option such as Turso (libSQL) or Supabase/Postgres and keep the connection
+  string in a Space secret. This needs changes to the storage layer: the bundled
+  `Storage` class is built around a local SQLite file.
+
+Keep the database out of the repository and keep tokens in Space secrets.
 
 ## Security and data handling
 
