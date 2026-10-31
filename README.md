@@ -1,3 +1,13 @@
+---
+title: Agent QA
+emoji: 🧠
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Agent QA
 
 Agent QA is a local-first test memory service for teams and coding tools that

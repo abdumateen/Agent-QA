@@ -31,7 +31,9 @@ x-service-defaults: &service-defaults
 services:
   core:
     <<: *service-defaults
-    command: ["agent-qa-core"]
+    ports:
+      - "7860:7860"
+    command: ["uvicorn", "agent_qa.api:app", "--host", "0.0.0.0", "--port", "7860"]
     environment:
       AGENT_QA_DB_PATH: /home/agentqa/.agent-qa/memory.db
       AGENT_QA_LOG_DIR: /home/agentqa/.agent-qa/logs

@@ -2,6 +2,7 @@
 
 import math
 import sqlite3
+from functools import partial
 from pathlib import Path
 from typing import TypeAlias
 
@@ -99,7 +100,11 @@ class Storage:
             },
             poolclass=NullPool,
         )
-        event.listen(self.engine, "connect", _configure_connection)
+        event.listen(
+            self.engine,
+            "connect",
+            partial(_configure_connection, disable_wal=self.settings.disable_wal),
+        )
         self._closed = False
         self._logger = get_logger(__name__)
 
@@ -568,12 +573,18 @@ class Storage:
             raise RuntimeError("Storage is closed.")
 
 
-def _configure_connection(dbapi_connection: object, connection_record: object) -> None:
+def _configure_connection(
+    dbapi_connection: object,
+    connection_record: object,
+    *,
+    disable_wal: bool = False,
+) -> None:
     if not isinstance(dbapi_connection, sqlite3.Connection):
         raise TypeError("Expected a SQLite connection.")
     cursor = dbapi_connection.cursor()
     try:
-        cursor.execute("PRAGMA journal_mode = WAL")
+        journal_mode = "DELETE" if disable_wal else "WAL"
+        cursor.execute(f"PRAGMA journal_mode = {journal_mode}")
         cursor.execute("PRAGMA foreign_keys = ON")
         cursor.execute("PRAGMA synchronous = NORMAL")
     finally:

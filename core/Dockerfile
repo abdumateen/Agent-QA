@@ -48,13 +48,11 @@ USER agentqa:agentqa
 
 RUN python -c "import sqlite3; connection = sqlite3.connect(':memory:'); connection.execute('CREATE VIRTUAL TABLE fts_probe USING fts5(content)'); connection.close()"
 
-# Both listeners use loopback. Published container ports cannot reach them.
-# Deployment must share the appropriate network namespace.
-EXPOSE 8765 8766
+EXPOSE 7860
 
 STOPSIGNAL SIGTERM
 
 HEALTHCHECK --interval=30s --timeout=12s --start-period=20s --retries=3 \
-    CMD ["python", "-c", "import sys; import httpx; client = httpx.Client(timeout=5.0, transport=httpx.HTTPTransport(retries=1), trust_env=False); response = client.get('http://127.0.0.1:8765/health'); response.raise_for_status(); healthy = response.json() == {'status': 'ok', 'version': '0.1.0'}; client.close(); sys.exit(0 if healthy else 1)"]
+    CMD ["python", "-c", "import sys; import httpx; client = httpx.Client(timeout=5.0, transport=httpx.HTTPTransport(retries=1), trust_env=False); response = client.get('http://127.0.0.1:7860/health'); response.raise_for_status(); healthy = response.json() == {'status': 'ok', 'version': '0.1.0'}; client.close(); sys.exit(0 if healthy else 1)"]
 
-CMD ["agent-qa-core"]
+CMD ["uvicorn", "agent_qa.api:app", "--host", "0.0.0.0", "--port", "7860"]

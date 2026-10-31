@@ -44,6 +44,7 @@ class Settings(BaseSettings):
         allow_inf_nan=False,
     )
     sqlite_busy_timeout_ms: int = Field(default=5000, ge=1, le=60000)
+    disable_wal: bool = False
 
     mcp_transport: Literal["stdio", "sse"] = "stdio"
     mcp_port: int = Field(default=8766, ge=1024, le=65535)
