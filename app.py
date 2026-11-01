@@ -6,14 +6,12 @@ A minimal Gradio UI is added at /ui; the REST API stays at the root.
 
 from __future__ import annotations
 
+import os
 import sys
-from pathlib import Path
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "core"))
 
 import gradio as gr
-
-# The agent_qa package lives in core/ and is not installed in the Space image,
-# so put it on the import path before importing it.
-sys.path.insert(0, str(Path(__file__).resolve().parent / "core"))
 
 from fastapi.responses import RedirectResponse  # noqa: E402
 

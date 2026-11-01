@@ -1,5 +1,6 @@
 """Validated configuration for the core service and MCP process."""
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -15,7 +16,7 @@ HTTP_TIMEOUT_SECONDS = 5.0
 HTTP_CONNECTION_RETRIES = 1
 
 DEFAULT_DATA_DIR = Path.home() / ".agent-qa"
-DEFAULT_DB_PATH = DEFAULT_DATA_DIR / "memory.db"
+DEFAULT_DB_PATH = Path(os.environ.get("AGENT_QA_DB_PATH", "/tmp/memory.db"))
 DEFAULT_LOG_DIR = DEFAULT_DATA_DIR / "logs"
 
 
