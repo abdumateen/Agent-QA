@@ -10,8 +10,8 @@ structlog>=24.4,<26.0
 mcp>=1.9,<2.0
 jsonschema>=4.23,<5.0
 
-# Gradio SDK runtime (app.py).
-gradio>=4.44,<6.0
+# Gradio SDK runtime is installed by HF Spaces (sdk_version in README).
+# Do not add gradio here to avoid version conflicts.
 
 # Used by agent_qa.persistence.backup_db() to upload snapshots to a Dataset.
 huggingface_hub>=0.25,<2.0
