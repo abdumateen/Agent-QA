@@ -103,3 +103,5 @@ logs/
 Thumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+# graphify knowledge-graph output
+graphify-out/
