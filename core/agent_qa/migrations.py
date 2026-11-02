@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy import Engine
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class MigrationError(RuntimeError):
@@ -46,6 +46,9 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         stack_trace TEXT NOT NULL,
         root_cause TEXT NOT NULL,
         fix TEXT NOT NULL,
+        error_signature TEXT,
+        fix_diff TEXT,
+        fix_commit TEXT,
         tags TEXT,
         resolved INTEGER NOT NULL DEFAULT 0 CHECK (resolved IN (0, 1)),
         resolved_at TEXT,
@@ -112,7 +115,8 @@ _TRIGGER_STATEMENTS: tuple[str, ...] = (
         INSERT INTO memory_fts(rowid, source, source_id, content)
         VALUES (1000000000 + new.id, 'api_contracts', CAST(new.id AS TEXT),
                 new.endpoint || ' ' || new.method || ' ' || new.request_schema || ' ' ||
-                new.response_schema || ' ' || CAST(new.status_code AS TEXT) || ' ' || coalesce(new.tags, ''));
+                new.response_schema || ' ' || CAST(new.status_code AS TEXT) || ' ' ||
+                coalesce(new.tags, ''));
     END
     """,
     """
@@ -121,7 +125,8 @@ _TRIGGER_STATEMENTS: tuple[str, ...] = (
         INSERT INTO memory_fts(rowid, source, source_id, content)
         VALUES (1000000000 + new.id, 'api_contracts', CAST(new.id AS TEXT),
                 new.endpoint || ' ' || new.method || ' ' || new.request_schema || ' ' ||
-                new.response_schema || ' ' || CAST(new.status_code AS TEXT) || ' ' || coalesce(new.tags, ''));
+                new.response_schema || ' ' || CAST(new.status_code AS TEXT) || ' ' ||
+                coalesce(new.tags, ''));
     END
     """,
     """
@@ -154,6 +159,16 @@ _TRIGGER_STATEMENTS: tuple[str, ...] = (
 )
 
 
+_VERSION_3_STATEMENTS: tuple[str, ...] = (
+    "ALTER TABLE failures ADD COLUMN error_signature TEXT",
+    "ALTER TABLE failures ADD COLUMN fix_diff TEXT",
+    "ALTER TABLE failures ADD COLUMN fix_commit TEXT",
+    """
+    CREATE INDEX idx_failures_error_signature ON failures(error_signature)
+    """,
+)
+
+
 def get_schema_version(connection: object) -> int:
     """Return SQLite's user-defined schema version."""
     if not hasattr(connection, "exec_driver_sql"):
@@ -175,7 +190,7 @@ def apply_migrations(engine: Engine) -> None:
             )
         if current == SCHEMA_VERSION:
             return
-        if current not in {0, 1}:
+        if current not in {0, 1, 2}:
             raise MigrationError(f"Unsupported database schema version: {current}.")
 
         if current == 0:
@@ -201,7 +216,14 @@ def apply_migrations(engine: Engine) -> None:
                     connection.exec_driver_sql(f'DROP TABLE IF EXISTS "{name}"')
                 connection.exec_driver_sql("PRAGMA user_version = 0")
                 raise
-        else:
+        elif current == 1:
             connection.exec_driver_sql("PRAGMA user_version = 1")
+        else:
+            try:
+                for statement in _VERSION_3_STATEMENTS:
+                    connection.exec_driver_sql(statement)
+            except Exception:
+                connection.exec_driver_sql("PRAGMA user_version = 2")
+                raise
 
         connection.exec_driver_sql(f"PRAGMA user_version = {SCHEMA_VERSION}")

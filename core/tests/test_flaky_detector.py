@@ -119,16 +119,18 @@ def test_update_flaky_test_aggregates_failed_and_error_runs(
 
 def test_update_flaky_test_requires_active_transaction(storage: Storage) -> None:
     """Aggregation rejects connections that do not have an active transaction."""
-    with storage.engine.connect() as connection:
-        with pytest.raises(ValueError, match="active transaction"):
-            update_flaky_test(connection, "missing", "pytest")
+    with storage.engine.connect() as connection, pytest.raises(
+        ValueError, match="active transaction"
+    ):
+        update_flaky_test(connection, "missing", "pytest")
 
 
 def test_update_flaky_test_requires_history(storage: Storage) -> None:
     """Aggregation rejects a test with no recorded executions."""
-    with storage.engine.begin() as connection:
-        with pytest.raises(ValueError, match="without recorded executions"):
-            update_flaky_test(connection, "missing", "pytest")
+    with storage.engine.begin() as connection, pytest.raises(
+        ValueError, match="without recorded executions"
+    ):
+        update_flaky_test(connection, "missing", "pytest")
 
 
 def test_update_flaky_test_requires_sqlite(storage: Storage) -> None:

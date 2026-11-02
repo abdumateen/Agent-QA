@@ -13,8 +13,7 @@ from _pytest.config import Config
 from _pytest.fixtures import FixtureRequest
 from _pytest.nodes import Item
 from _pytest.reports import TestReport
-from pytest import CallInfo
-from pytest import StashKey
+from pytest import CallInfo, StashKey
 
 from pytest_agent_qa.client import (
     AgentQAClient,
@@ -189,6 +188,16 @@ def pytest_runtest_makereport(
     stack_trace = _stack_trace(call, report)
 
     try:
+        prior_failures = client.find_similar_failures(error_message, stack_trace)
+    except PluginClientError as exc:
+        _log_client_failure("similar failures", item.nodeid, exc)
+        prior_failures = []
+
+    section = _prior_failure_section(prior_failures)
+    if section is not None:
+        report.sections.append(("Agent QA memory", section))
+
+    try:
         client.remember_failure(
             test_name=item.nodeid,
             error_message=error_message,
@@ -257,6 +266,35 @@ def _stack_trace(call: CallInfo[Any], report: TestReport) -> str:
             return formatted
     formatted_report = str(report.longrepr).strip()
     return formatted_report or "No stack trace was provided."
+
+
+_PLACEHOLDER_ROOT_CAUSE = "Unclassified test failure"
+_PLACEHOLDER_FIX = "Fix not recorded"
+_MATCH_RULE = "=" * 42
+
+
+def _prior_failure_section(failures: list[JsonObject]) -> str | None:
+    """Build the terminal block shown when a diagnosed failure repeats.
+
+    Returns None when no prior record carries a real diagnosis, which is the
+    case for failures first seen in this run.
+    """
+    diagnosed = [
+        failure
+        for failure in failures
+        if str(failure.get("root_cause", "")) not in ("", _PLACEHOLDER_ROOT_CAUSE)
+        and str(failure.get("fix", "")) not in ("", _PLACEHOLDER_FIX)
+    ]
+    if not diagnosed:
+        return None
+
+    best = diagnosed[0]
+    return (
+        "\n=== 🧠 AGENT QA: PREVIOUS FAILURE MATCH ===\n"
+        f"Seen before ({len(diagnosed)}x). Root Cause: {best['root_cause']}\n"
+        f"Suggested Fix: {best['fix']}\n"
+        f"{_MATCH_RULE}\n"
+    )
 
 
 def _log_client_failure(operation: str, test_name: str, error: Exception) -> None:

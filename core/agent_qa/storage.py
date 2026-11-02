@@ -31,6 +31,7 @@ from agent_qa.utils import (
     canonical_json,
     deserialize_tags,
     format_timestamp,
+    generate_error_signature,
     normalize_tags,
     parse_json_object,
     require_nonempty,
@@ -332,6 +333,9 @@ class Storage:
         )
         parameters = {
             **request.model_dump(exclude={"tags"}),
+            "error_signature": generate_error_signature(
+                request.error_message, request.stack_trace
+            ),
             "tags": serialize_tags(request.tags),
         }
         with self.engine.begin() as connection:
@@ -339,10 +343,12 @@ class Storage:
                 text(
                     """
                     INSERT INTO failures (
-                        test_name, error_message, stack_trace, root_cause, fix, tags
+                        test_name, error_message, stack_trace, root_cause, fix,
+                        error_signature, tags
                     )
                     VALUES (
-                        :test_name, :error_message, :stack_trace, :root_cause, :fix, :tags
+                        :test_name, :error_message, :stack_trace, :root_cause, :fix,
+                        :error_signature, :tags
                     )
                     """
                 ),
@@ -380,6 +386,30 @@ class Storage:
                     "pattern": error_pattern,
                     "pro_tier": 1 if verify_license(self.settings.license_key) else 0,
                 },
+            ).mappings().all()
+            return [_record(row) for row in rows]
+
+    def find_similar_failures(
+        self, error_signature: str, limit: int = 3
+    ) -> list[MemoryRecord]:
+        """Return prior failures sharing a signature, best-diagnosed first."""
+        self._ensure_open()
+        signature = require_nonempty(error_signature, "Error signature")
+        limit = validate_limit(limit)
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT * FROM failures
+                    WHERE error_signature = :signature
+                    ORDER BY resolved DESC,
+                             (fix <> 'Fix not recorded') DESC,
+                             created_at DESC,
+                             id DESC
+                    LIMIT :limit
+                    """
+                ),
+                {"signature": signature, "limit": limit},
             ).mappings().all()
             return [_record(row) for row in rows]
 

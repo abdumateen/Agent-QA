@@ -27,6 +27,7 @@ from agent_qa.models import (
     TestRunCreate,
 )
 from agent_qa.storage import MemoryNotFoundError, MemoryRecord, Storage
+from agent_qa.utils import generate_error_signature
 
 
 def _get_storage(request: Request) -> Storage:
@@ -305,6 +306,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             failure_id=failure_id,
             root_cause=body.root_cause,
             fix=body.fix,
+        )
+
+    @application.get(
+        "/v1/failures/similar",
+        response_model=list[MemoryRecord],
+        operation_id="find_similar_failures",
+        tags=["Failures"],
+    )
+    def find_similar_failures(
+        storage: StorageDependency,
+        error_message: Annotated[str, Query(min_length=1)],
+        stack_trace: Annotated[str, Query()] = "",
+        limit: ResultLimit = 3,
+    ) -> list[MemoryRecord]:
+        """List prior failures sharing the signature generated from this error.
+
+        Registered before the catch-all failure lookup so the literal path wins.
+        """
+        return storage.find_similar_failures(
+            generate_error_signature(error_message, stack_trace),
+            limit=limit,
         )
 
     @application.get(

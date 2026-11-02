@@ -88,6 +88,31 @@ class AgentQAClient:
             },
         )
 
+    def find_similar_failures(
+        self,
+        error_message: str,
+        stack_trace: str,
+        limit: int = 3,
+    ) -> list[JsonObject]:
+        """Find prior failures whose error signature matches this error."""
+        result = self._request(
+            "GET",
+            "/v1/failures/similar",
+            params={
+                "error_message": error_message,
+                "stack_trace": stack_trace,
+                "limit": limit,
+            },
+        )
+        if not isinstance(result, list):
+            raise PluginClientError("The core service returned an unexpected list.")
+        records: list[JsonObject] = []
+        for item in result:
+            if not isinstance(item, dict):
+                raise PluginClientError("The core service returned a non-object item.")
+            records.append(item)
+        return records
+
     def remember_fixture(
         self,
         name: str,

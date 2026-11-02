@@ -19,6 +19,62 @@ _MAX_SEARCH_CHARACTERS = 4096
 _MAX_SEARCH_TERMS = 128
 _SEARCH_TOKEN_PATTERN = re.compile(r"\w+", flags=re.UNICODE)
 
+_UUID_PATTERN = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+_HEX_ADDRESS_PATTERN = re.compile(r"\b0x[0-9a-fA-F]+\b")
+_HEX_DIGEST_PATTERN = re.compile(r"\b[0-9a-fA-F]{32,}\b")
+_TIMESTAMP_PATTERN = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b"
+)
+_DATE_PATTERN = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_TIME_PATTERN = re.compile(r"\b\d{2}:\d{2}:\d{2}(?:\.\d+)?\b")
+_LINE_SUFFIX_PATTERN = re.compile(r":\d+(?::\d+)?")
+_LINE_WORD_PATTERN = re.compile(r"\bline\s+\d+\b", flags=re.IGNORECASE)
+_TEMP_PATH_PATTERN = re.compile(
+    r"(?:/tmp/|/var/folders/|[A-Za-z]:[\\/]Users[\\/])[^\s\"')\]]+"
+)
+_DURATION_PATTERN = re.compile(
+    r"\b\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|secs?|seconds?|min|minutes?)\b"
+)
+_WHITESPACE_PATTERN = re.compile(r"\s+")
+
+
+def generate_error_signature(error_message: str, stack_trace: str) -> str:
+    """Return a stable fingerprint for a failure that ignores volatile detail.
+
+    Line numbers, temporary paths, memory addresses, UUIDs, digests, and
+    timestamps differ between runs of the same defect. Removing them lets two
+    occurrences of one defect produce the same signature.
+    """
+    normalized_message = _normalize_signature_text(error_message)
+    exception_line = ""
+    for candidate in reversed(stack_trace.splitlines()):
+        stripped = candidate.strip()
+        if stripped:
+            exception_line = _normalize_signature_text(stripped)
+            break
+
+    material = f"{normalized_message}\n{exception_line}"
+    return sha256_content(material)
+
+
+def _normalize_signature_text(value: str) -> str:
+    """Strip volatile tokens from one signature component."""
+    text = _UUID_PATTERN.sub("<uuid>", value)
+    text = _TIMESTAMP_PATTERN.sub("<timestamp>", text)
+    text = _DATE_PATTERN.sub("<date>", text)
+    text = _TIME_PATTERN.sub("<time>", text)
+    text = _HEX_ADDRESS_PATTERN.sub("<address>", text)
+    text = _HEX_DIGEST_PATTERN.sub("<digest>", text)
+    text = _TEMP_PATH_PATTERN.sub("<path>", text)
+    text = _LINE_WORD_PATTERN.sub("line <n>", text)
+    text = _LINE_SUFFIX_PATTERN.sub("", text)
+    text = _DURATION_PATTERN.sub("<duration>", text)
+    text = _WHITESPACE_PATTERN.sub(" ", text)
+    return text.strip().casefold()
+
+
 
 def canonical_json(content: JsonObject) -> str:
     """Serialize a JSON object deterministically."""

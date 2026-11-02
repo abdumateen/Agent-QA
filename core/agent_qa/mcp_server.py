@@ -272,6 +272,22 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
             payload={"root_cause": root_cause, "fix": fix},
         )
 
+    @server.tool(name="find_similar_failures")
+    async def find_similar_failures(
+        error_message: str,
+        stack_trace: str = "",
+        limit: int = 3,
+    ) -> list[ToolRecord]:
+        """Find prior failures whose error signature matches this error."""
+        return await _request_records(
+            "/v1/failures/similar",
+            params={
+                "error_message": error_message,
+                "stack_trace": stack_trace,
+                "limit": limit,
+            },
+        )
+
     @server.tool(name="suggest_test")
     async def suggest_test(
         description: str,

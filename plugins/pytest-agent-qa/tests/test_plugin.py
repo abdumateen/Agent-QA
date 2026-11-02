@@ -146,6 +146,9 @@ def test_pytest_plugin_records_failure_and_run(
     )
 
     with respx.mock(base_url=BASE_URL, assert_all_called=True) as router:
+        similar_route = router.get("/v1/failures/similar").mock(
+            return_value=httpx.Response(200, json=[])
+        )
         failure_route = router.post("/v1/failures").mock(
             return_value=httpx.Response(
                 201,
@@ -165,6 +168,7 @@ def test_pytest_plugin_records_failure_and_run(
         )
 
     result.assert_outcomes(failed=1)
+    assert similar_route.call_count == 1
     assert failure_route.call_count == 1
     assert run_route.call_count == 1
 

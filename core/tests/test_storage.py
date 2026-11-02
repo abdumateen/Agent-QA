@@ -477,16 +477,18 @@ def test_delete_trigger_removes_search_entry(storage: Storage) -> None:
 def test_rolled_back_update_restores_search_index(storage: Storage) -> None:
     """Full-text triggers participate in the surrounding transaction."""
     storage.remember_fixture("atomic-index", "json", {"marker": "originalunique"})
-    with pytest.raises(RuntimeError, match="Abort transaction"):
-        with storage.engine.begin() as connection:
-            connection.execute(
-                text("UPDATE fixtures SET content = :content WHERE name = :name"),
-                {
-                    "content": '{"marker":"replacementunique"}',
-                    "name": "atomic-index",
-                },
-            )
-            raise RuntimeError("Abort transaction")
+    with (
+        pytest.raises(RuntimeError, match="Abort transaction"),
+        storage.engine.begin() as connection,
+    ):
+        connection.execute(
+            text("UPDATE fixtures SET content = :content WHERE name = :name"),
+            {
+                "content": '{"marker":"replacementunique"}',
+                "name": "atomic-index",
+            },
+        )
+        raise RuntimeError("Abort transaction")
 
     assert len(storage.search_memory("originalunique")) == 1
     assert storage.search_memory("replacementunique") == []

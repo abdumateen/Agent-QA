@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import shutil
+import sqlite3
 import subprocess
 import sys
 from typing import Annotated
@@ -295,6 +298,56 @@ def search(
 ) -> None:
     """Search fixtures, contracts, and failures."""
     _run(_client().search_memory(query, limit))
+
+
+@app.command("doctor")
+def doctor() -> None:
+    """Check that this machine can run Agent QA, and report what it found."""
+    for label, detail, passed in _doctor_checks(_client()):
+        marker = typer.style("✅", fg=typer.colors.GREEN)
+        if not passed:
+            marker = typer.style("❌", fg=typer.colors.RED)
+        typer.echo(f"{marker} {label}: {detail}")
+
+
+def _doctor_checks(client: AgentQAClient) -> list[tuple[str, str, bool]]:
+    """Collect the environment and service checks shown by `doctor`."""
+    version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+
+    try:
+        with sqlite3.connect(":memory:") as connection:
+            connection.execute("CREATE VIRTUAL TABLE probe USING fts5(content)")
+    except sqlite3.Error as exc:
+        fts5 = (f"unavailable ({exc})", False)
+    else:
+        fts5 = ("available", True)
+
+    frameworks = ", ".join(_detected_frameworks()) or "none detected"
+    try:
+        client.health()
+    except ClientError as exc:
+        service = (str(exc), False)
+    else:
+        service = (f"reachable at {client.base_url}", True)
+
+    return [
+        ("Python", version, sys.version_info >= (3, 11)),
+        ("SQLite FTS5", *fts5),
+        ("Test frameworks", frameworks, True),
+        ("Core service", *service),
+    ]
+
+
+def _detected_frameworks() -> list[str]:
+    """List the test frameworks this environment can run."""
+    detected: list[str] = []
+    if importlib.util.find_spec("pytest") is not None:
+        detected.append("pytest")
+    if shutil.which("npx") is not None and shutil.which("node") is not None:
+        detected.append("Jest")
+    if shutil.which("go") is not None:
+        detected.append("Go")
+    return detected
 
 
 @app.command("version")

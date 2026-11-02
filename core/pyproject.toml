@@ -90,3 +90,8 @@ strict = true
 pretty = true
 show_error_codes = true
 warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# Optional backup upload dependency, imported inside a guarded try block.
+module = "huggingface_hub.*"
+ignore_missing_imports = true
