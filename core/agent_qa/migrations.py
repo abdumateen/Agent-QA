@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy import Engine
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 
 class MigrationError(RuntimeError):
@@ -52,6 +52,10 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         tags TEXT,
         resolved INTEGER NOT NULL DEFAULT 0 CHECK (resolved IN (0, 1)),
         resolved_at TEXT,
+        times_applied INTEGER NOT NULL DEFAULT 0,
+        times_worked INTEGER NOT NULL DEFAULT 0,
+        last_verified_at TEXT,
+        confidence REAL NOT NULL DEFAULT 0.0,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
@@ -73,6 +77,8 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         run_count INTEGER NOT NULL,
         fail_count INTEGER NOT NULL,
         flaky_score REAL NOT NULL,
+        consistently_failing INTEGER NOT NULL DEFAULT 0
+            CHECK (consistently_failing IN (0, 1)),
         quarantined INTEGER NOT NULL DEFAULT 0 CHECK (quarantined IN (0, 1)),
         quarantine_reason TEXT,
         quarantined_at TEXT,
@@ -168,6 +174,17 @@ _VERSION_3_STATEMENTS: tuple[str, ...] = (
     """,
 )
 
+_VERSION_4_STATEMENTS: tuple[str, ...] = (
+    "ALTER TABLE failures ADD COLUMN times_applied INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE failures ADD COLUMN times_worked INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE failures ADD COLUMN last_verified_at TEXT",
+    "ALTER TABLE failures ADD COLUMN confidence REAL NOT NULL DEFAULT 0.0",
+)
+
+_VERSION_5_STATEMENTS: tuple[str, ...] = (
+    "ALTER TABLE flaky_tests ADD COLUMN consistently_failing INTEGER NOT NULL DEFAULT 0",
+)
+
 
 def get_schema_version(connection: object) -> int:
     """Return SQLite's user-defined schema version."""
@@ -190,7 +207,7 @@ def apply_migrations(engine: Engine) -> None:
             )
         if current == SCHEMA_VERSION:
             return
-        if current not in {0, 1, 2}:
+        if current not in {0, 1, 2, 3, 4}:
             raise MigrationError(f"Unsupported database schema version: {current}.")
 
         if current == 0:
@@ -218,12 +235,26 @@ def apply_migrations(engine: Engine) -> None:
                 raise
         elif current == 1:
             connection.exec_driver_sql("PRAGMA user_version = 1")
-        else:
+        elif current == 2:
             try:
                 for statement in _VERSION_3_STATEMENTS:
                     connection.exec_driver_sql(statement)
             except Exception:
                 connection.exec_driver_sql("PRAGMA user_version = 2")
+                raise
+        elif current == 3:
+            try:
+                for statement in _VERSION_4_STATEMENTS:
+                    connection.exec_driver_sql(statement)
+            except Exception:
+                connection.exec_driver_sql("PRAGMA user_version = 3")
+                raise
+        else:
+            try:
+                for statement in _VERSION_5_STATEMENTS:
+                    connection.exec_driver_sql(statement)
+            except Exception:
+                connection.exec_driver_sql("PRAGMA user_version = 4")
                 raise
 
         connection.exec_driver_sql(f"PRAGMA user_version = {SCHEMA_VERSION}")

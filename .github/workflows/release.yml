@@ -285,6 +285,61 @@ jobs:
       - name: Build core and MCP image
         run: docker compose build
 
+  publish-pypi:
+    name: Publish to PyPI
+    needs:
+      - validate-version
+      - python
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Download verified distributions
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-python-*
+          path: release-python
+          merge-multiple: true
+
+      - name: Publish distributions
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: release-python
+
+  publish-npm:
+    name: Publish to npm
+    needs:
+      - validate-version
+      - javascript
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Download verified package
+        uses: actions/download-artifact@v4
+        with:
+          name: release-jest
+          path: release-assets
+
+      - name: Publish package
+        working-directory: release-assets
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish ./*.tgz --provenance
+
   publish:
     name: Publish GitHub release
     needs:
@@ -293,6 +348,8 @@ jobs:
       - javascript
       - go
       - container
+      - publish-pypi
+      - publish-npm
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

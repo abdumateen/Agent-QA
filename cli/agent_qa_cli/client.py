@@ -251,6 +251,10 @@ class AgentQAClient:
             },
         )
 
+    def export_html(self) -> str:
+        """Render the whole memory database as one self-contained HTML document."""
+        return self._request_text("GET", "/v1/export/html")
+
     def search_memory(
         self,
         query: str,
@@ -263,6 +267,25 @@ class AgentQAClient:
             params={"query": query, "limit": limit},
         )
         return [_object(item) for item in result]
+
+    def _request_text(self, method: str, path: str) -> str:
+        """Fetch a non-JSON document, such as the exported memory page."""
+        with httpx.Client(
+            base_url=self.base_url,
+            timeout=httpx.Timeout(_TIMEOUT_SECONDS),
+            transport=httpx.HTTPTransport(retries=0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            try:
+                response = client.request(method, path)
+            except httpx.HTTPError as exc:
+                raise ClientError("The core service is unavailable.") from exc
+        if not 200 <= response.status_code < 300:
+            raise ClientError(
+                f"The core service returned HTTP {response.status_code}."
+            )
+        return response.text
 
     def _request_object(
         self,

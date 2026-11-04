@@ -105,3 +105,10 @@ Desktop.ini
 $RECYCLE.BIN/
 # graphify knowledge-graph output
 graphify-out/
+
+*.bak
+*.json
+# Except for package.json and tsconfig.json
+!package.json
+!tsconfig.json
+!package-lock.json

@@ -2,9 +2,10 @@
 
 import math
 import sqlite3
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import TypeAlias
+from typing import TypeAlias, TypeGuard
 
 from pydantic import JsonValue, TypeAdapter
 from sqlalchemy import URL, Engine, event, text
@@ -54,6 +55,7 @@ _TIMESTAMP_FIELDS = frozenset(
         "timestamp",
         "last_updated",
         "quarantined_at",
+        "last_verified_at",
     }
 )
 
@@ -411,7 +413,13 @@ class Storage:
                 ),
                 {"signature": signature, "limit": limit},
             ).mappings().all()
-            return [_record(row) for row in rows]
+            now = datetime.now(UTC)
+            records: list[MemoryRecord] = []
+            for row in rows:
+                record = _record(row)
+                record["confidence"] = confidence_score(record, now)
+                records.append(record)
+            return records
 
     def resolve_failure(
         self, failure_id: int, root_cause: str, fix: str
@@ -486,7 +494,7 @@ class Storage:
         return result
 
     def get_flaky_tests(self, threshold: float = 0.3) -> list[MemoryRecord]:
-        """List nonempty test histories whose failure ratio meets the threshold."""
+        """List nonempty test histories whose alternation score meets the threshold."""
         self._ensure_open()
         if (
             isinstance(threshold, bool)
@@ -585,6 +593,40 @@ class Storage:
                 )
         return results
 
+    def export_snapshot(self, limit_per_section: int = 1000) -> dict[str, list[MemoryRecord]]:
+        """Return every memory section as an offline-readable snapshot.
+
+        Failures carry the same confidence score the API and the pytest plugin
+        report, so an exported page states the same strength of evidence.
+        """
+        self._ensure_open()
+        limit = validate_limit(limit_per_section)
+        now = datetime.now(UTC)
+        queries = {
+            "fixtures": "SELECT * FROM fixtures ORDER BY updated_at DESC, id DESC LIMIT :limit",
+            "api_contracts": (
+                "SELECT * FROM api_contracts ORDER BY updated_at DESC, id DESC LIMIT :limit"
+            ),
+            "failures": (
+                "SELECT * FROM failures ORDER BY resolved ASC, created_at DESC, id DESC "
+                "LIMIT :limit"
+            ),
+            "flaky_tests": (
+                "SELECT * FROM flaky_tests ORDER BY flaky_score DESC, run_count DESC, "
+                "test_name ASC, framework ASC LIMIT :limit"
+            ),
+        }
+        snapshot: dict[str, list[MemoryRecord]] = {}
+        with self.engine.connect() as connection:
+            for section, statement in queries.items():
+                rows = connection.execute(text(statement), {"limit": limit}).mappings().all()
+                records = [_record(row) for row in rows]
+                if section == "failures":
+                    for record in records:
+                        record["confidence"] = confidence_score(record, now)
+                snapshot[section] = records
+        return snapshot
+
     def suggest_test(self, description: str, limit: int = 10) -> list[MemoryRecord]:
         """Find existing fixtures, contracts, and failures relevant to a description."""
         return self.search_memory(description, limit)
@@ -641,7 +683,39 @@ def _record(row: RowMapping) -> MemoryRecord:
         value = data.get(field)
         if value is not None:
             data[field] = format_timestamp(str(value))
-    for field in ("resolved", "quarantined"):
+    for field in ("resolved", "quarantined", "consistently_failing"):
         if field in data:
             data[field] = bool(data[field])
     return _RECORD_ADAPTER.validate_python(data, strict=True)
+
+
+_CONFIDENCE_HALF_LIFE_DAYS = 30.0
+
+
+def confidence_score(record: MemoryRecord, now: datetime) -> float:
+    """Score a prior fix as its success ratio decayed by the age of the evidence."""
+    applied_value = record.get("times_applied")
+    worked_value = record.get("times_worked")
+    applied = applied_value if _is_count(applied_value) else 0
+    worked = worked_value if _is_count(worked_value) else 0
+    if applied <= 0:
+        return 0.0
+
+    reference = (
+        record.get("last_verified_at")
+        or record.get("resolved_at")
+        or record.get("created_at")
+    )
+    decay = 1.0
+    if isinstance(reference, str):
+        age_days = max(
+            (now - datetime.fromisoformat(reference)).total_seconds() / 86400.0,
+            0.0,
+        )
+        decay = 0.5 ** (age_days / _CONFIDENCE_HALF_LIFE_DAYS)
+    return (worked / applied) * decay
+
+
+def _is_count(value: JsonValue) -> TypeGuard[int]:
+    """Report whether a stored value is a usable integer count."""
+    return isinstance(value, int) and not isinstance(value, bool)

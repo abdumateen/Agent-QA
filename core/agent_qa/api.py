@@ -9,12 +9,13 @@ import uvicorn
 from fastapi import Depends, FastAPI, Path, Query, Request, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 
 from agent_qa import __version__
 from agent_qa.config import CORE_HOST, CORE_PORT, Settings, get_settings
+from agent_qa.html_export import render_html
 from agent_qa.licensing import require_pro_license
 from agent_qa.logging_config import configure_logging, get_logger
 from agent_qa.models import (
@@ -430,6 +431,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def sync_team(payload: dict[str, object]) -> dict[str, str]:
         """Placeholder for Pro-tier remote team sync."""
         return {"status": "synced"}
+
+    @application.get(
+        "/v1/export/html",
+        response_class=HTMLResponse,
+        operation_id="export_html",
+        tags=["Memory"],
+    )
+    def export_html(storage: StorageDependency) -> HTMLResponse:
+        """Render the whole memory database as one offline HTML document."""
+        return HTMLResponse(render_html(storage.export_snapshot()))
 
     @application.get(
         "/v1/analytics/flaky-trends",

@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from agent_qa.flaky_detector import (
     calculate_flaky_score,
+    is_consistently_failing,
     is_flaky,
     update_flaky_test,
 )
@@ -14,72 +15,103 @@ from agent_qa.storage import Storage
 
 
 @pytest.mark.parametrize(
-    ("run_count", "fail_count", "expected"),
+    ("statuses", "expected"),
     [
-        (0, 0, 0.0),
-        (1, 0, 0.0),
-        (1, 1, 1.0),
-        (4, 1, 0.25),
-        (10, 3, 0.3),
-        (10, 7, 0.7),
+        ([], 0.0),
+        (["passed"], 0.0),
+        (["failed"], 0.0),
+        (["passed", "failed", "passed", "failed"], 1.0),
+        (["failed", "passed", "failed", "passed"], 1.0),
+        (["passed", "failed", "failed", "passed"], 1.0 / 3.0),
+        (["passed", "passed", "failed", "failed"], 1.0 / 3.0),
+        (["passed", "passed", "passed"], 0.0),
+        (["failed", "failed", "failed", "failed"], 0.0),
+        (["failed", "failed", "failed", "failed", "passed"], 0.25),
     ],
 )
 def test_calculate_flaky_score(
-    run_count: int,
-    fail_count: int,
+    statuses: list[str],
     expected: float,
 ) -> None:
-    """The score equals failures divided by total executions."""
-    assert calculate_flaky_score(run_count, fail_count) == expected
+    """The score measures alternation, not failure frequency."""
+    assert calculate_flaky_score(statuses) == pytest.approx(expected)
+
+
+def test_consistently_failing_scores_zero_not_one() -> None:
+    """A test that always fails is broken, so it is never scored as flaky."""
+    always_failing = ["failed", "failed", "failed", "failed"]
+
+    assert calculate_flaky_score(always_failing) == 0.0
+    assert is_consistently_failing(always_failing) is True
+    assert is_flaky(always_failing, 0.0) is False
+
+
+def test_alternating_history_scores_one() -> None:
+    """A perfectly alternating history is maximally flaky."""
+    alternating = ["passed", "failed", "passed", "failed"]
+
+    assert calculate_flaky_score(alternating) == 1.0
+    assert is_consistently_failing(alternating) is False
+    assert is_flaky(alternating, 1.0) is True
+
+
+def test_failure_ratio_alone_cannot_separate_the_two() -> None:
+    """Both histories divide to one half, but only one is flaky."""
+    clustered = ["passed", "passed", "failed", "failed"]
+    alternating = ["passed", "failed", "passed", "failed"]
+
+    assert calculate_flaky_score(clustered) < calculate_flaky_score(alternating)
+    assert is_flaky(clustered, 0.8) is False
+    assert is_flaky(alternating, 0.8) is True
+
+
+def test_skipped_runs_are_ignored() -> None:
+    """Skips carry no signal, so they neither help nor hurt the score."""
+    with_skips = ["passed", "skipped", "failed", "skipped", "passed", "failed"]
+
+    assert calculate_flaky_score(with_skips) == 1.0
 
 
 @pytest.mark.parametrize(
-    ("run_count", "fail_count"),
+    "statuses",
     [
-        (-1, 0),
-        (1, -1),
-        (1, 2),
-        (0, 1),
-        (True, 0),
-        (1, False),
+        ["unknown"],
+        ["passed", "passed "],
+        ["passed", 1],
+        ["PASSED"],
     ],
 )
-def test_calculate_flaky_score_rejects_invalid_counts(
-    run_count: int,
-    fail_count: int,
-) -> None:
-    """Counts must be integer values within their logical bounds."""
+def test_calculate_flaky_score_rejects_unknown_status(statuses: list[str]) -> None:
+    """Only the recorded status vocabulary is accepted."""
     with pytest.raises(ValueError):
-        calculate_flaky_score(run_count, fail_count)
+        calculate_flaky_score(statuses)
 
 
 @pytest.mark.parametrize(
-    ("run_count", "fail_count", "threshold", "expected"),
+    ("statuses", "threshold", "expected"),
     [
-        (1, 0, 0.0, False),
-        (1, 0, 0.1, False),
-        (1, 1, 0.3, True),
-        (10, 3, 0.3, True),
-        (10, 2, 0.3, False),
-        (10, 10, 1.0, True),
-        (0, 0, 0.0, False),
+        (["passed", "passed"], 0.0, False),
+        (["passed", "failed", "passed", "failed"], 0.3, True),
+        (["passed", "passed", "failed", "failed"], 0.3, True),
+        (["passed", "passed", "failed", "failed"], 0.4, False),
+        (["failed", "failed", "failed"], 0.3, False),
+        ([], 0.0, False),
     ],
 )
 def test_is_flaky(
-    run_count: int,
-    fail_count: int,
+    statuses: list[str],
     threshold: float,
     expected: bool,
 ) -> None:
     """Classification uses an inclusive threshold and excludes empty history."""
-    assert is_flaky(run_count, fail_count, threshold) is expected
+    assert is_flaky(statuses, threshold) is expected
 
 
 @pytest.mark.parametrize("threshold", [-0.1, 1.1, float("nan"), float("inf"), True])
 def test_is_flaky_rejects_invalid_threshold(threshold: float) -> None:
     """Thresholds must be finite probabilities."""
     with pytest.raises(ValueError):
-        is_flaky(1, 1, threshold)
+        is_flaky(["passed", "failed"], threshold)
 
 
 def test_is_flaky_uses_configured_threshold(
@@ -92,8 +124,8 @@ def test_is_flaky_uses_configured_threshold(
 
     get_settings.cache_clear()
     try:
-        assert is_flaky(4, 3) is True
-        assert is_flaky(4, 2) is False
+        assert is_flaky(["passed", "failed", "passed", "failed"]) is True
+        assert is_flaky(["passed", "passed", "failed", "failed"]) is False
     finally:
         get_settings.cache_clear()
 
@@ -114,7 +146,10 @@ def test_update_flaky_test_aggregates_failed_and_error_runs(
     assert aggregate.framework == "pytest"
     assert aggregate.run_count == 4
     assert aggregate.fail_count == 2
-    assert aggregate.flaky_score == 0.5
+    # passed, failed, error, skipped -> scored as pass, fail, fail. The longest
+    # alternating stretch is the first two, so 1 of the 2 available steps.
+    assert aggregate.flaky_score == pytest.approx(0.5)
+    assert aggregate.consistently_failing == 0
 
 
 def test_update_flaky_test_requires_active_transaction(storage: Storage) -> None:
@@ -157,7 +192,7 @@ def test_update_flaky_test_is_recomputable(storage: Storage) -> None:
 
     assert first.run_count == second.run_count == 2
     assert first.fail_count == second.fail_count == 1
-    assert first.flaky_score == second.flaky_score == 0.5
+    assert first.flaky_score == second.flaky_score == 1.0
 
 
 def test_update_flaky_test_preserves_quarantine_fields(storage: Storage) -> None:
@@ -212,7 +247,7 @@ def test_storage_threshold_filters_aggregates(storage: Storage) -> None:
     results = storage.get_flaky_tests(threshold=0.5)
 
     assert [item["test_name"] for item in results] == ["high"]
-    assert results[0]["flaky_score"] == 0.5
+    assert results[0]["flaky_score"] == 1.0
 
 
 @pytest.mark.parametrize("threshold", [-0.1, 1.1, float("nan"), float("inf"), True])

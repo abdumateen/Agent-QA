@@ -215,6 +215,10 @@ class FlakyTest(SQLModel, table=True):
             name="ck_flaky_tests_score",
         ),
         CheckConstraint(
+            "consistently_failing IN (0, 1)",
+            name="ck_flaky_tests_consistently_failing",
+        ),
+        CheckConstraint(
             "quarantined IN (0, 1)", name="ck_flaky_tests_quarantined"
         ),
     )
@@ -228,6 +232,7 @@ class FlakyTest(SQLModel, table=True):
     run_count: int = Field(default=0, ge=0)
     fail_count: int = Field(default=0, ge=0)
     flaky_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    consistently_failing: int = Field(default=0, ge=0, le=1)
     last_updated: datetime = Field(
         default_factory=utc_now,
         sa_column=Column(

@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -298,6 +299,30 @@ def search(
 ) -> None:
     """Search fixtures, contracts, and failures."""
     _run(_client().search_memory(query, limit))
+
+
+@app.command("export-html")
+def export_html(
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Destination file, or - for stdout."),
+    ] = Path("memory.html"),
+) -> None:
+    """Write the stored memory to one self-contained HTML file."""
+    try:
+        document = _client().export_html()
+    except ClientError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    if str(output) == "-":
+        typer.echo(document)
+        return
+    try:
+        output.write_text(document, encoding="utf-8")
+    except OSError as exc:
+        typer.echo(f"Unable to write {output}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Wrote {output}")
 
 
 @app.command("doctor")

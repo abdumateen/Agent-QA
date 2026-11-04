@@ -263,7 +263,9 @@ def test_test_runs_flaky_and_quarantine(client: TestClient) -> None:
     assert len(flaky.json()) == 1
     assert flaky.json()[0]["run_count"] == 2
     assert flaky.json()[0]["fail_count"] == 1
-    assert flaky.json()[0]["flaky_score"] == 0.5
+    # One pass then one failure is a single alternation, the most two runs allow.
+    assert flaky.json()[0]["flaky_score"] == 1.0
+    assert flaky.json()[0]["consistently_failing"] is False
 
     quarantine = client.post(
         "/v1/quarantine",

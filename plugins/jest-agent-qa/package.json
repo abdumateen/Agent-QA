@@ -7,6 +7,11 @@
     "email": "maintainers@agent-qa.dev"
   },
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abdumateen/Agent-QA.git",
+    "directory": "plugins/jest-agent-qa"
+  },
   "engines": {
     "node": ">=20"
   },

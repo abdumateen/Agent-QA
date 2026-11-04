@@ -289,10 +289,15 @@ def _prior_failure_section(failures: list[JsonObject]) -> str | None:
         return None
 
     best = diagnosed[0]
+    confidence = best.get("confidence")
+    percent = 0
+    if isinstance(confidence, (int, float)):
+        percent = round(float(confidence) * 100)
     return (
         "\n=== 🧠 AGENT QA: PREVIOUS FAILURE MATCH ===\n"
         f"Seen before ({len(diagnosed)}x). Root Cause: {best['root_cause']}\n"
         f"Suggested Fix: {best['fix']}\n"
+        f"Confidence: {percent}%\n"
         f"{_MATCH_RULE}\n"
     )
 

@@ -368,6 +368,24 @@ def test_resolve_missing_failure(storage: Storage) -> None:
         storage.resolve_failure(999, "Diagnosis", "Correction")
 
 
+def test_similar_failures_report_confidence(storage: Storage) -> None:
+    """Confidence is zero until a fix is applied, then tracks worked over applied."""
+    failure = _remember_failure(storage)
+    signature = failure["error_signature"]
+    assert isinstance(signature, str)
+    assert storage.find_similar_failures(signature)[0]["confidence"] == 0.0
+
+    with storage.engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE failures SET times_applied = 4, times_worked = 3 WHERE id = "
+            f"{_record_id(failure)}"
+        )
+
+    confidence = storage.find_similar_failures(signature)[0]["confidence"]
+    assert isinstance(confidence, float)
+    assert 0.5 < confidence <= 0.75
+
+
 def test_record_test_run_refreshes_statistics(storage: Storage) -> None:
     """Recording a run updates the associated aggregate in the same operation."""
     first = storage.record_test_run("test_order", "pytest", "passed", 0.1)
@@ -377,7 +395,9 @@ def test_record_test_run_refreshes_statistics(storage: Storage) -> None:
     aggregate = storage.get_flaky_tests()[0]
     assert aggregate["run_count"] == 2
     assert aggregate["fail_count"] == 1
-    assert aggregate["flaky_score"] == 0.5
+    # One pass then one failure is a single alternation, the most two runs allow.
+    assert aggregate["flaky_score"] == 1.0
+    assert aggregate["consistently_failing"] is False
 
 
 def test_detector_failure_rolls_back_run(
@@ -537,10 +557,15 @@ def test_concurrent_runs_do_not_lose_counts(storage: Storage) -> None:
         records = list(executor.map(record, range(12)))
 
     assert len({_record_id(item) for item in records}) == 12
-    aggregate = storage.get_flaky_tests()[0]
+    aggregate = storage.get_flaky_tests(threshold=0.0)[0]
     assert aggregate["run_count"] == 12
     assert aggregate["fail_count"] == 6
-    assert aggregate["flaky_score"] == 0.5
+    # The score depends on insertion order, which concurrent writers decide, so
+    # only its range and its non-consistent classification are guaranteed here.
+    score = aggregate["flaky_score"]
+    assert isinstance(score, float)
+    assert 0.0 <= score <= 1.0
+    assert aggregate["consistently_failing"] is False
 
 
 def test_health(storage: Storage) -> None:

@@ -30,4 +30,5 @@ def test_section_reports_the_diagnosis_and_repeat_count():
     assert "Seen before (1x)" in section
     assert "Root Cause: Off-by-one in the page limit" in section
     assert "Suggested Fix: Use >=" in section
+    assert "Confidence: 0%" in section
     assert section.endswith("=" * 42 + "\n")
