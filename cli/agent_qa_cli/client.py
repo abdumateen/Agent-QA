@@ -255,6 +255,23 @@ class AgentQAClient:
         """Render the whole memory database as one self-contained HTML document."""
         return self._request_text("GET", "/v1/export/html")
 
+    def export_sync(self, repo_id: str | None = None) -> str:
+        """Fetch shareable failures as one JSONL document."""
+        return self._request_text(
+            "GET",
+            "/v1/sync/export",
+            params={"repo_id": repo_id},
+        )
+
+    def import_sync(self, payload: str) -> JsonObject:
+        """Merge a JSONL export into this machine's memory."""
+        return self._request_object(
+            "POST",
+            "/v1/sync/import",
+            content=payload,
+            headers={"Content-Type": "text/plain"},
+        )
+
     def search_memory(
         self,
         query: str,
@@ -268,8 +285,17 @@ class AgentQAClient:
         )
         return [_object(item) for item in result]
 
-    def _request_text(self, method: str, path: str) -> str:
+    def _request_text(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: QueryParameters | None = None,
+    ) -> str:
         """Fetch a non-JSON document, such as the exported memory page."""
+        request_params = {
+            key: value for key, value in (params or {}).items() if value is not None
+        }
         with httpx.Client(
             base_url=self.base_url,
             timeout=httpx.Timeout(_TIMEOUT_SECONDS),
@@ -278,7 +304,7 @@ class AgentQAClient:
             follow_redirects=False,
         ) as client:
             try:
-                response = client.request(method, path)
+                response = client.request(method, path, params=request_params)
             except httpx.HTTPError as exc:
                 raise ClientError("The core service is unavailable.") from exc
         if not 200 <= response.status_code < 300:
@@ -294,8 +320,17 @@ class AgentQAClient:
         *,
         params: QueryParameters | None = None,
         json: JsonObject | None = None,
+        content: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> JsonObject:
-        result = self._request(method, path, params=params, json=json)
+        result = self._request(
+            method,
+            path,
+            params=params,
+            json=json,
+            content=content,
+            headers=headers,
+        )
         return _object(result)
 
     def _request_list(
@@ -317,6 +352,8 @@ class AgentQAClient:
         *,
         params: QueryParameters | None = None,
         json: JsonObject | None = None,
+        content: str | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> JsonValue:
         """Execute one request, starting the service after the first connection failure."""
         transport = httpx.HTTPTransport(retries=0)
@@ -339,6 +376,8 @@ class AgentQAClient:
                         path,
                         params=request_params,
                         json=json,
+                        content=content,
+                        headers=headers,
                     )
                 except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                     if attempt == 0 and not self._startup_attempted:

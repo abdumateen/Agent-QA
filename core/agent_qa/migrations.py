@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy import Engine
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class MigrationError(RuntimeError):
@@ -20,6 +20,7 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         content TEXT NOT NULL,
         hash TEXT NOT NULL,
         tags TEXT,
+        repo_id TEXT NOT NULL DEFAULT 'local',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -33,6 +34,7 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         response_schema TEXT NOT NULL,
         status_code INTEGER NOT NULL,
         tags TEXT,
+        repo_id TEXT NOT NULL DEFAULT 'local',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(endpoint, method, status_code)
@@ -56,7 +58,10 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         times_worked INTEGER NOT NULL DEFAULT 0,
         last_verified_at TEXT,
         confidence REAL NOT NULL DEFAULT 0.0,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        repo_id TEXT NOT NULL DEFAULT 'local',
+        resolution TEXT NOT NULL DEFAULT 'repo',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
     """,
     """
@@ -185,6 +190,24 @@ _VERSION_5_STATEMENTS: tuple[str, ...] = (
     "ALTER TABLE flaky_tests ADD COLUMN consistently_failing INTEGER NOT NULL DEFAULT 0",
 )
 
+_INDEX_STATEMENTS: tuple[str, ...] = (
+    "CREATE INDEX idx_fixtures_repo_id ON fixtures(repo_id)",
+    "CREATE INDEX idx_api_contracts_repo_id ON api_contracts(repo_id)",
+    "CREATE INDEX idx_failures_repo_id ON failures(repo_id)",
+)
+
+_VERSION_6_STATEMENTS: tuple[str, ...] = (
+    "ALTER TABLE fixtures ADD COLUMN repo_id TEXT NOT NULL DEFAULT 'local'",
+    "ALTER TABLE api_contracts ADD COLUMN repo_id TEXT NOT NULL DEFAULT 'local'",
+    "ALTER TABLE failures ADD COLUMN repo_id TEXT NOT NULL DEFAULT 'local'",
+    "ALTER TABLE failures ADD COLUMN resolution TEXT NOT NULL DEFAULT 'repo'",
+    "ALTER TABLE failures ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+    "UPDATE failures SET updated_at = created_at WHERE updated_at = ''",
+    "CREATE INDEX idx_fixtures_repo_id ON fixtures(repo_id)",
+    "CREATE INDEX idx_api_contracts_repo_id ON api_contracts(repo_id)",
+    "CREATE INDEX idx_failures_repo_id ON failures(repo_id)",
+)
+
 
 def get_schema_version(connection: object) -> int:
     """Return SQLite's user-defined schema version."""
@@ -207,7 +230,7 @@ def apply_migrations(engine: Engine) -> None:
             )
         if current == SCHEMA_VERSION:
             return
-        if current not in {0, 1, 2, 3, 4}:
+        if current not in {0, 1, 2, 3, 4, 5}:
             raise MigrationError(f"Unsupported database schema version: {current}.")
 
         if current == 0:
@@ -227,6 +250,8 @@ def apply_migrations(engine: Engine) -> None:
                     connection.exec_driver_sql(statement)
                     applied.append(name)
                 for statement in _TRIGGER_STATEMENTS:
+                    connection.exec_driver_sql(statement)
+                for statement in _INDEX_STATEMENTS:
                     connection.exec_driver_sql(statement)
             except Exception:
                 for name in reversed(applied):
@@ -249,12 +274,19 @@ def apply_migrations(engine: Engine) -> None:
             except Exception:
                 connection.exec_driver_sql("PRAGMA user_version = 3")
                 raise
-        else:
+        elif current == 4:
             try:
                 for statement in _VERSION_5_STATEMENTS:
                     connection.exec_driver_sql(statement)
             except Exception:
                 connection.exec_driver_sql("PRAGMA user_version = 4")
+                raise
+        else:
+            try:
+                for statement in _VERSION_6_STATEMENTS:
+                    connection.exec_driver_sql(statement)
+            except Exception:
+                connection.exec_driver_sql("PRAGMA user_version = 5")
                 raise
 
         connection.exec_driver_sql(f"PRAGMA user_version = {SCHEMA_VERSION}")

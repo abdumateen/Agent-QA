@@ -33,6 +33,7 @@ from agent_qa.utils import (
     deserialize_tags,
     format_timestamp,
     generate_error_signature,
+    get_repo_id,
     normalize_tags,
     parse_json_object,
     require_nonempty,
@@ -83,9 +84,11 @@ class Storage:
         db_path: str | Path | None = None,
         *,
         settings: Settings | None = None,
+        repo_id: str | None = None,
     ) -> None:
         """Create the database directory, configure SQLite, and apply migrations."""
         self.settings = settings if settings is not None else get_settings()
+        self.repo_id = repo_id if repo_id is not None else get_repo_id()
         if db_path is None:
             self.db_path = self.settings.db_path
         else:
@@ -170,13 +173,14 @@ class Storage:
             connection.execute(
                 text(
                     """
-                    INSERT INTO fixtures (name, type, content, hash, tags)
-                    VALUES (:name, :type, :content, :hash, :tags)
+                    INSERT INTO fixtures (name, type, content, hash, tags, repo_id)
+                    VALUES (:name, :type, :content, :hash, :tags, :repo_id)
                     ON CONFLICT(name) DO UPDATE SET
                         type = excluded.type,
                         content = excluded.content,
                         hash = excluded.hash,
                         tags = excluded.tags,
+                        repo_id = excluded.repo_id,
                         updated_at = CURRENT_TIMESTAMP
                     """
                 ),
@@ -186,6 +190,7 @@ class Storage:
                     "content": encoded,
                     "hash": sha256_content(encoded),
                     "tags": serialize_tags(request.tags),
+                    "repo_id": self.repo_id,
                 },
             )
             row = connection.execute(
@@ -280,21 +285,25 @@ class Storage:
             "response_schema": canonical_json(request.response_schema),
             "status_code": request.status_code,
             "tags": serialize_tags(request.tags),
+            "repo_id": self.repo_id,
         }
         with self.engine.begin() as connection:
             connection.execute(
                 text(
                     """
                     INSERT INTO api_contracts (
-                        endpoint, method, request_schema, response_schema, status_code, tags
+                        endpoint, method, request_schema, response_schema, status_code,
+                        tags, repo_id
                     )
                     VALUES (
-                        :endpoint, :method, :request_schema, :response_schema, :status_code, :tags
+                        :endpoint, :method, :request_schema, :response_schema, :status_code,
+                        :tags, :repo_id
                     )
                     ON CONFLICT(endpoint, method, status_code) DO UPDATE SET
                         request_schema = excluded.request_schema,
                         response_schema = excluded.response_schema,
                         tags = excluded.tags,
+                        repo_id = excluded.repo_id,
                         updated_at = CURRENT_TIMESTAMP
                     """
                 ),
@@ -339,6 +348,7 @@ class Storage:
                 request.error_message, request.stack_trace
             ),
             "tags": serialize_tags(request.tags),
+            "repo_id": self.repo_id,
         }
         with self.engine.begin() as connection:
             connection.execute(
@@ -346,11 +356,11 @@ class Storage:
                     """
                     INSERT INTO failures (
                         test_name, error_message, stack_trace, root_cause, fix,
-                        error_signature, tags
+                        error_signature, tags, repo_id, updated_at
                     )
                     VALUES (
                         :test_name, :error_message, :stack_trace, :root_cause, :fix,
-                        :error_signature, :tags
+                        :error_signature, :tags, :repo_id, CURRENT_TIMESTAMP
                     )
                     """
                 ),
@@ -394,16 +404,21 @@ class Storage:
     def find_similar_failures(
         self, error_signature: str, limit: int = 3
     ) -> list[MemoryRecord]:
-        """Return prior failures sharing a signature, best-diagnosed first."""
+        """Return prior failures sharing a signature, this repo's first.
+
+        Two passes: the caller's own repository, then rows another repository
+        shared globally. Local evidence answers a local failure better than a
+        shared diagnosis does, so it ranks first and both are labelled.
+        """
         self._ensure_open()
         signature = require_nonempty(error_signature, "Error signature")
         limit = validate_limit(limit)
         with self.engine.connect() as connection:
-            rows = connection.execute(
+            local_rows = connection.execute(
                 text(
                     """
                     SELECT * FROM failures
-                    WHERE error_signature = :signature
+                    WHERE error_signature = :signature AND repo_id = :repo_id
                     ORDER BY resolved DESC,
                              (fix <> 'Fix not recorded') DESC,
                              created_at DESC,
@@ -411,15 +426,42 @@ class Storage:
                     LIMIT :limit
                     """
                 ),
-                {"signature": signature, "limit": limit},
+                {"signature": signature, "repo_id": self.repo_id, "limit": limit},
             ).mappings().all()
-            now = datetime.now(UTC)
-            records: list[MemoryRecord] = []
-            for row in rows:
-                record = _record(row)
-                record["confidence"] = confidence_score(record, now)
-                records.append(record)
-            return records
+            rows = [
+                (row, "repo")
+                for row in local_rows
+            ]
+            if len(rows) < limit:
+                global_rows = connection.execute(
+                    text(
+                        """
+                        SELECT * FROM failures
+                        WHERE error_signature = :signature
+                          AND resolution = 'global'
+                          AND repo_id <> :repo_id
+                        ORDER BY resolved DESC,
+                                 (fix <> 'Fix not recorded') DESC,
+                                 created_at DESC,
+                                 id DESC
+                        LIMIT :limit
+                        """
+                    ),
+                    {
+                        "signature": signature,
+                        "repo_id": self.repo_id,
+                        "limit": limit - len(rows),
+                    },
+                ).mappings().all()
+                rows.extend((row, "global") for row in global_rows)
+        now = datetime.now(UTC)
+        records: list[MemoryRecord] = []
+        for row, scope in rows:
+            record = _record(row)
+            record["confidence"] = confidence_score(record, now)
+            record["scope"] = scope
+            records.append(record)
+        return records
 
     def resolve_failure(
         self, failure_id: int, root_cause: str, fix: str
@@ -436,7 +478,8 @@ class Storage:
                     SET root_cause = :root_cause,
                         fix = :fix,
                         resolved = 1,
-                        resolved_at = coalesce(resolved_at, CURRENT_TIMESTAMP)
+                        resolved_at = coalesce(resolved_at, CURRENT_TIMESTAMP),
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = :id
                     """
                 ),
@@ -470,7 +513,8 @@ class Storage:
                     UPDATE failures
                     SET times_applied = times_applied + 1,
                         times_worked = times_worked + :worked,
-                        last_verified_at = CURRENT_TIMESTAMP
+                        last_verified_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = :id
                     """
                 ),
@@ -670,6 +714,145 @@ class Storage:
         """Find existing fixtures, contracts, and failures relevant to a description."""
         return self.search_memory(description, limit)
 
+    def set_failure_resolution(
+        self, failure_id: int, *, global_scope: bool
+    ) -> MemoryRecord:
+        """Mark one failure shareable with other repositories, or private again."""
+        self._ensure_open()
+        failure_id = _ID_ADAPTER.validate_python(failure_id)
+        with self.engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    UPDATE failures
+                    SET resolution = :resolution,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = :id
+                    """
+                ),
+                {"id": failure_id, "resolution": "global" if global_scope else "repo"},
+            )
+            row = connection.execute(
+                text("SELECT * FROM failures WHERE id = :id"),
+                {"id": failure_id},
+            ).mappings().one_or_none()
+            result = _required_record(row, "Failure not found.")
+        self._logger.info(
+            "failure_resolution_set",
+            failure_id=failure_id,
+            global_scope=global_scope,
+        )
+        return result
+
+    def export_sync(self, repo_id: str | None = None) -> str:
+        """Render shareable failures as JSONL, one record per line.
+
+        Only rows marked `resolution = 'global'` leave this machine, unless a
+        repository is named explicitly, which exports that repository's own
+        rows instead. Both exclude nothing else: private rows stay private.
+        """
+        self._ensure_open()
+        with self.engine.connect() as connection:
+            if repo_id is None:
+                rows = connection.execute(
+                    text(
+                        """
+                        SELECT * FROM failures
+                        WHERE resolution = 'global'
+                        ORDER BY id ASC
+                        """
+                    )
+                ).mappings().all()
+            else:
+                rows = connection.execute(
+                    text(
+                        """
+                        SELECT * FROM failures
+                        WHERE repo_id = :repo_id
+                        ORDER BY id ASC
+                        """
+                    ),
+                    {"repo_id": require_nonempty(repo_id, "Repository id")},
+                ).mappings().all()
+        return "".join(
+            canonical_json(_sync_record(_record(row))) + "\n" for row in rows
+        )
+
+    def import_sync(self, payload: str) -> MemoryRecord:
+        """Merge JSONL failures, keeping the newer of each conflicting pair.
+
+        Rows are matched on repository and error signature. A record whose
+        `updated_at` is not newer than the stored one is left alone, so
+        importing an older export cannot roll a diagnosis back.
+        """
+        self._ensure_open()
+        records = _parse_sync_records(payload)
+        inserted = 0
+        updated = 0
+        skipped = 0
+        with self.engine.begin() as connection:
+            for record in records:
+                signature = str(record["error_signature"])
+                target_repo = str(record.get("repo_id") or self.repo_id)
+                existing = connection.execute(
+                    text(
+                        """
+                        SELECT id, updated_at FROM failures
+                        WHERE error_signature = :signature AND repo_id = :repo_id
+                        ORDER BY updated_at DESC, id DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {"signature": signature, "repo_id": target_repo},
+                ).mappings().one_or_none()
+                if existing is None:
+                    connection.execute(
+                        text(
+                            """
+                            INSERT INTO failures (
+                                test_name, error_message, stack_trace, root_cause, fix,
+                                error_signature, tags, repo_id, resolution,
+                                resolved, updated_at
+                            )
+                            VALUES (
+                                :test_name, :error_message, :stack_trace, :root_cause, :fix,
+                                :error_signature, :tags, :repo_id, :resolution,
+                                :resolved, :updated_at
+                            )
+                            """
+                        ),
+                        _sync_parameters(record, target_repo),
+                    )
+                    inserted += 1
+                    continue
+                if str(record["updated_at"]) <= str(existing["updated_at"]):
+                    skipped += 1
+                    continue
+                parameters = _sync_parameters(record, target_repo)
+                parameters["id"] = existing["id"]
+                connection.execute(
+                    text(
+                        """
+                        UPDATE failures
+                        SET test_name = :test_name,
+                            error_message = :error_message,
+                            stack_trace = :stack_trace,
+                            root_cause = :root_cause,
+                            fix = :fix,
+                            tags = :tags,
+                            resolution = :resolution,
+                            updated_at = :updated_at
+                        WHERE id = :id
+                        """
+                    ),
+                    parameters,
+                )
+                updated += 1
+        self._logger.info(
+            "sync_imported", inserted=inserted, updated=updated, skipped=skipped
+        )
+        return {"inserted": inserted, "updated": updated, "skipped": skipped}
+
     def health(self) -> MemoryRecord:
         """Verify database connectivity and return the public health response."""
         from agent_qa import __version__
@@ -762,3 +945,81 @@ def confidence_score(record: MemoryRecord, now: datetime) -> float:
 def _is_count(value: JsonValue) -> TypeGuard[int]:
     """Report whether a stored value is a usable integer count."""
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+_SYNC_FIELDS = (
+    "test_name",
+    "error_message",
+    "stack_trace",
+    "root_cause",
+    "fix",
+    "error_signature",
+    "tags",
+    "repo_id",
+    "resolution",
+    "resolved",
+    "updated_at",
+)
+
+
+def _sync_record(record: MemoryRecord) -> MemoryRecord:
+    """Reduce a stored failure to the fields one machine shares with another."""
+    shared: MemoryRecord = {}
+    for field in _SYNC_FIELDS:
+        value = record.get(field)
+        if value is not None:
+            shared[field] = value
+    return shared
+
+
+def _sync_parameters(record: MemoryRecord, target_repo: str) -> dict[str, JsonValue]:
+    """Build the bind parameters for one validated sync record."""
+    resolved = record.get("resolved")
+    return {
+        "test_name": str(record["test_name"]),
+        "error_message": str(record["error_message"]),
+        "stack_trace": str(record.get("stack_trace") or ""),
+        "root_cause": str(record.get("root_cause") or ""),
+        "fix": str(record.get("fix") or ""),
+        "error_signature": str(record["error_signature"]),
+        "tags": record.get("tags") if isinstance(record.get("tags"), str) else None,
+        "repo_id": target_repo,
+        "resolution": str(record.get("resolution") or "global"),
+        "resolved": 1 if resolved else 0,
+        "updated_at": str(record["updated_at"]),
+    }
+
+
+def _parse_sync_records(payload: str) -> list[MemoryRecord]:
+    """Decode JSONL into validated sync records, rejecting malformed lines."""
+    if not payload.strip():
+        raise ValueError("Sync payload must not be empty.")
+    records: list[MemoryRecord] = []
+    for number, line in enumerate(payload.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            decoded = _RECORD_ADAPTER.validate_json(line, strict=True)
+        except Exception as exc:
+            raise ValueError(f"Sync line {number} is not a JSON object.") from exc
+        for required in ("error_signature", "test_name", "error_message", "updated_at"):
+            value = decoded.get(required)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"Sync line {number} is missing a nonempty {required}."
+                )
+        _validate_sync_timestamp(str(decoded["updated_at"]), number)
+        records.append(decoded)
+    if not records:
+        raise ValueError("Sync payload must contain at least one record.")
+    return records
+
+
+def _validate_sync_timestamp(value: str, line: int) -> None:
+    """Reject a timestamp that cannot be compared against stored evidence."""
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            f"Sync line {line} has an unreadable updated_at: {value}."
+        ) from exc

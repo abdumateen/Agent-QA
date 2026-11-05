@@ -165,6 +165,12 @@ class Failure(SQLModel, table=True):
     resolved_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime, nullable=True)
     )
+    updated_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=Column(
+            DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+        ),
+    )
 
 
 class TestRun(SQLModel, table=True):
@@ -297,6 +303,12 @@ class FailureResolve(RequestModel):
 
     root_cause: NonEmptyString
     fix: NonEmptyString
+
+
+class FailureShare(RequestModel):
+    """Choose whether one recorded failure may leave its repository."""
+
+    global_scope: bool = True
 
 
 class FixApplication(RequestModel):

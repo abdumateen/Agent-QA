@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import typer
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
@@ -44,6 +45,7 @@ failure_app = typer.Typer(
 )
 
 _OBJECT_ADAPTER = TypeAdapter[JsonObject](dict[str, JsonValue])
+_ARCHIVE_TIMEOUT_SECONDS = 10.0
 
 
 def _client() -> AgentQAClient:
@@ -325,6 +327,65 @@ def export_html(
     typer.echo(f"Wrote {output}")
 
 
+sync_app = typer.Typer(
+    name="sync",
+    help="Share global failures with another Agent QA machine.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+
+
+def _archive_request(method: str, url: str, payload: str | None = None) -> str:
+    """Exchange JSONL with an archive endpoint, reporting HTTP failures plainly."""
+    try:
+        response = httpx.request(
+            method,
+            url,
+            content=payload,
+            headers={"Content-Type": "text/plain"},
+            timeout=httpx.Timeout(_ARCHIVE_TIMEOUT_SECONDS),
+            trust_env=False,
+            follow_redirects=False,
+        )
+    except httpx.HTTPError as exc:
+        raise ClientError(f"Unable to reach {url}: {exc}") from exc
+    if not 200 <= response.status_code < 300:
+        raise ClientError(f"{url} returned HTTP {response.status_code}.")
+    return response.text
+
+
+@sync_app.command("push")
+def sync_push(
+    url: Annotated[str, typer.Argument(help="Archive URL accepting a text POST.")],
+) -> None:
+    """Send this machine's globally shared failures to an archive."""
+    try:
+        payload = _client().export_sync()
+        _archive_request("POST", url, payload)
+    except ClientError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Shared {_record_count(payload)} failures with {url}")
+
+
+@sync_app.command("pull")
+def sync_pull(
+    url: Annotated[str, typer.Argument(help="Archive URL returning JSONL.")],
+) -> None:
+    """Fetch another machine's shared failures and merge them here."""
+    try:
+        payload = _archive_request("GET", url)
+        _run(_client().import_sync(payload))
+    except ClientError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+
+def _record_count(payload: str) -> int:
+    """Count the JSONL records in one export."""
+    return sum(1 for line in payload.splitlines() if line.strip())
+
+
 @app.command("doctor")
 def doctor() -> None:
     """Check that this machine can run Agent QA, and report what it found."""
@@ -384,6 +445,7 @@ def version() -> None:
 app.add_typer(fixture_app)
 app.add_typer(contract_app)
 app.add_typer(failure_app)
+app.add_typer(sync_app)
 
 
 def main() -> None:

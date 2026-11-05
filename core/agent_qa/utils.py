@@ -2,7 +2,9 @@
 
 import hashlib
 import json
+import os
 import re
+import subprocess
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import TypeAlias
@@ -10,6 +12,10 @@ from typing import TypeAlias
 from pydantic import ConfigDict, JsonValue, TypeAdapter
 
 JsonObject: TypeAlias = dict[str, JsonValue]
+
+_REMOTE_PREFIXES = ("https://", "http://", "ssh://", "git://")
+_REPO_ID_CHARACTERS = 12
+_GIT_TIMEOUT_SECONDS = 5.0
 
 _JSON_OBJECT_ADAPTER = TypeAdapter(
     JsonObject,
@@ -96,6 +102,54 @@ def parse_json_object(content: str) -> JsonObject:
 def sha256_content(content: str) -> str:
     """Return the hexadecimal SHA-256 digest of UTF-8 content."""
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def normalize_remote_url(remote_url: str) -> str:
+    """Reduce a git remote URL to an owner/repository identity.
+
+    Scheme, credentials, host, and the `.git` suffix all differ between the
+    clones of one repository, so none of them belong in its identity.
+    """
+    text = remote_url.strip()
+    for prefix in _REMOTE_PREFIXES:
+        if text.startswith(prefix):
+            text = text[len(prefix) :]
+            break
+    if text.startswith("git@"):
+        text = text[len("git@") :]
+    if text.endswith(".git"):
+        text = text[: -len(".git")]
+    return text.replace(":", "/").strip("/")
+
+
+def get_repo_id(directory: str | None = None) -> str:
+    """Return a stable identifier for the repository the caller runs in.
+
+    The identity is the git remote, so two clones of one repository on two
+    machines share it and their memories can be merged. A directory without a
+    usable remote falls back to its own absolute path, which keeps that
+    checkout's memories to itself.
+    """
+    working_directory = directory or os.getcwd()
+    material: str | None = None
+    try:
+        completed = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            cwd=working_directory,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        completed = None
+    if completed is not None and completed.returncode == 0:
+        normalized = normalize_remote_url(completed.stdout)
+        if normalized:
+            material = normalized
+    if material is None:
+        material = os.path.abspath(working_directory)
+    return sha256_content(material)[:_REPO_ID_CHARACTERS]
 
 
 def normalize_tags(tags: Sequence[str] | None) -> list[str]:

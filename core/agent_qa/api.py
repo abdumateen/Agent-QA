@@ -6,10 +6,10 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 import uvicorn
-from fastapi import Depends, FastAPI, Path, Query, Request, status
+from fastapi import Body, Depends, FastAPI, Path, Query, Request, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 
@@ -22,6 +22,7 @@ from agent_qa.models import (
     ContractCreate,
     FailureCreate,
     FailureResolve,
+    FailureShare,
     FixApplication,
     FixtureCreate,
     HealthResponse,
@@ -449,6 +450,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def sync_team(payload: dict[str, object]) -> dict[str, str]:
         """Placeholder for Pro-tier remote team sync."""
         return {"status": "synced"}
+
+    @application.get(
+        "/v1/sync/export",
+        response_class=PlainTextResponse,
+        operation_id="sync_export",
+        tags=["Sync"],
+    )
+    def sync_export(
+        storage: StorageDependency,
+        repo_id: Annotated[str | None, Query(min_length=1)] = None,
+    ) -> PlainTextResponse:
+        """Render shareable failures as JSONL, globally or for one repository.
+
+        Without a repository, only rows already marked `resolution = 'global'`
+        are exported, so nothing private leaves unless it was shared first.
+        """
+        return PlainTextResponse(storage.export_sync(repo_id))
+
+    @application.post(
+        "/v1/sync/import",
+        response_model=MemoryRecord,
+        operation_id="sync_import",
+        tags=["Sync"],
+    )
+    def sync_import(
+        payload: Annotated[str, Body(media_type="text/plain")],
+        storage: StorageDependency,
+    ) -> MemoryRecord:
+        """Merge a JSONL export, keeping the newer of each conflicting pair."""
+        return storage.import_sync(payload)
+
+    @application.post(
+        "/v1/failures/{failure_id}/share",
+        response_model=MemoryRecord,
+        operation_id="share_failure",
+        tags=["Failures"],
+    )
+    def share_failure(
+        failure_id: Annotated[int, Path(gt=0)],
+        body: FailureShare,
+        storage: StorageDependency,
+    ) -> MemoryRecord:
+        """Mark one failure as shareable with other repositories, or private.
+
+        Registered before the catch-all failure lookup so the literal path wins.
+        """
+        return storage.set_failure_resolution(failure_id, global_scope=body.global_scope)
 
     @application.get(
         "/v1/export/html",
