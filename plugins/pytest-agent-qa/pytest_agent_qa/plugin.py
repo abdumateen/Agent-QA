@@ -23,6 +23,8 @@ from pytest_agent_qa.client import (
 
 logger = logging.getLogger("pytest_agent_qa")
 
+_COMPACT_BUDGET = 2000
+
 _START_KEY: StashKey[float] = StashKey[float]()
 _REPORTS_KEY: StashKey[list[TestReport]] = StashKey[list[TestReport]]()
 _FAILURE_SENT_KEY: StashKey[bool] = StashKey[bool]()
@@ -102,6 +104,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         default=False,
         help="Disable Agent QA test-run and failure recording.",
+    )
+    group.addoption(
+        "--agent-qa-compact",
+        action="store_true",
+        default=False,
+        help="Show the compressed evidence pack instead of the failure match.",
     )
 
 
@@ -187,16 +195,14 @@ def pytest_runtest_makereport(
     error_message = _error_message(call, report)
     stack_trace = _stack_trace(call, report)
 
-    try:
-        prior_failures = client.find_similar_failures(error_message, stack_trace)
-    except PluginClientError as exc:
-        _log_client_failure("similar failures", item.nodeid, exc)
-        prior_failures = []
-
-    section = _prior_failure_section(prior_failures)
-    if section is not None:
-        report.sections.append(("Agent QA memory", section))
-        _report_fix_application(client, prior_failures, item.nodeid)
+    if item.config.getoption("--agent-qa-compact"):
+        _append_compressed_section(client, report, item.nodeid, error_message)
+    else:
+        prior_failures = _similar_failures(client, item.nodeid, error_message, stack_trace)
+        section = _prior_failure_section(prior_failures)
+        if section is not None:
+            report.sections.append(("Agent QA memory", section))
+            _report_fix_application(client, prior_failures, item.nodeid)
 
     try:
         client.remember_failure(
@@ -318,6 +324,59 @@ def _report_fix_application(
         client.apply_fix(failure_id)
     except PluginClientError as exc:
         _log_client_failure("fix application", test_name, exc)
+
+
+def _similar_failures(
+    client: AgentQAClient,
+    test_name: str,
+    error_message: str,
+    stack_trace: str,
+) -> list[JsonObject]:
+    """Retrieve prior failures, treating an unreachable service as no memory."""
+    try:
+        return client.find_similar_failures(error_message, stack_trace)
+    except PluginClientError as exc:
+        _log_client_failure("similar failures", test_name, exc)
+        return []
+
+
+def _append_compressed_section(
+    client: AgentQAClient,
+    report: TestReport,
+    test_name: str,
+    query: str,
+) -> None:
+    """Show the token-budgeted evidence pack instead of the failure match.
+
+    Opt-in only: the default path keeps the human-readable block, which reads
+    far better in a terminal than a truncated record does.
+    """
+    try:
+        pack = client.compile_context(query, _COMPACT_BUDGET)
+    except PluginClientError as exc:
+        _log_client_failure("compressed context", test_name, exc)
+        return
+    section = _compressed_section(pack)
+    if section is not None:
+        report.sections.append(("Agent QA memory", section))
+
+
+def _compressed_section(pack: JsonObject) -> str | None:
+    """Build the terminal block for a compiled evidence pack."""
+    chunks = pack.get("evidence")
+    if not isinstance(chunks, list) or not chunks:
+        return None
+    lines = ["\n=== 🧠 AGENT QA: COMPRESSED EVIDENCE ==="]
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        lines.append(f"[{chunk.get('source')} #{chunk.get('source_id')}]")
+        lines.append(str(chunk.get("text", "")))
+    tokens = pack.get("tokens_used")
+    budget = pack.get("budget")
+    lines.append(f"Tokens: {tokens}/{budget}  Truncated: {bool(pack.get('truncated'))}")
+    lines.append(_MATCH_RULE)
+    return "\n".join(lines) + "\n"
 
 
 def _prior_failure_section(failures: list[JsonObject]) -> str | None:

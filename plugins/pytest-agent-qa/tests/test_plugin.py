@@ -297,3 +297,54 @@ def test_pytest_plugin_does_not_fail_test_when_service_is_down(
     )
 
     result.assert_outcomes(passed=1)
+
+def test_pytest_plugin_compact_mode_uses_context_endpoint(
+    pytester: pytest.Pytester,
+) -> None:
+    """The compact option swaps the failure match for the evidence pack."""
+    pytester.makepyfile(
+        test_sample="""
+        def test_failing():
+            raise AssertionError("expected value was not returned")
+        """
+    )
+
+    with respx.mock(base_url=BASE_URL, assert_all_called=False) as router:
+        context_route = router.get("/v1/context").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "evidence": [
+                        {
+                            "source": "failures",
+                            "source_id": 3,
+                            "text": "fix: Use >=",
+                        }
+                    ],
+                    "tokens_used": 12,
+                    "budget": 2000,
+                    "truncated": False,
+                },
+            )
+        )
+        similar_route = router.get("/v1/failures/similar").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        router.post("/v1/failures").mock(
+            return_value=httpx.Response(201, json={"id": 4})
+        )
+        router.post("/v1/test-runs").mock(
+            return_value=httpx.Response(201, json={"id": 5, "status": "failed"})
+        )
+        result = pytester.runpytest(
+            "--agent-qa-url",
+            BASE_URL,
+            "--agent-qa-compact",
+            "-q",
+            "-rA",
+        )
+
+    result.assert_outcomes(failed=1)
+    assert context_route.call_count == 1
+    assert similar_route.call_count == 0
+    result.stdout.fnmatch_lines(["*COMPRESSED EVIDENCE*", "*fix: Use >=*"])

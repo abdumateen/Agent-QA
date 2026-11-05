@@ -358,6 +358,18 @@ def create_mcp_server(settings: Settings | None = None) -> FastMCP:
             params={"query": query, "limit": limit},
         )
 
+    @server.tool(name="compile_context")
+    async def compile_context(
+        query: str,
+        budget: int = 2000,
+    ) -> ToolRecord:
+        """Compress matching memories into a token-budgeted evidence pack."""
+        return await _request_record(
+            "GET",
+            "/v1/context",
+            params={"query": query, "budget": budget},
+        )
+
     @server.tool(name="health")
     async def health() -> ToolRecord:
         """Check core database connectivity and retrieve the service version."""

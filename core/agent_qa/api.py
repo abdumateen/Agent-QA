@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 
 from agent_qa import __version__
 from agent_qa.config import CORE_HOST, CORE_PORT, Settings, get_settings
+from agent_qa.context_compiler import compile_evidence
 from agent_qa.html_export import render_html
 from agent_qa.licensing import require_pro_license
 from agent_qa.logging_config import configure_logging, get_logger
@@ -376,6 +377,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> list[MemoryRecord]:
         """Find relevant stored memories for a proposed test description."""
         return storage.suggest_test(description=description, limit=limit)
+
+    @application.get(
+        "/v1/context",
+        response_model=MemoryRecord,
+        operation_id="compile_context",
+        tags=["Search"],
+    )
+    def compile_context(
+        storage: StorageDependency,
+        query: Annotated[str, Query(min_length=1, max_length=4096)],
+        budget: Annotated[int, Query(ge=1, le=100000)] = 2000,
+    ) -> MemoryRecord:
+        """Compress matching memories into a token-budgeted evidence pack."""
+        return compile_evidence(storage, query, budget)
 
     @application.post(
         "/v1/test-runs",

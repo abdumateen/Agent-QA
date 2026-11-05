@@ -113,6 +113,14 @@ class AgentQAClient:
             records.append(item)
         return records
 
+    def compile_context(self, query: str, budget: int = 2000) -> JsonObject:
+        """Fetch one token-budgeted evidence pack for a query."""
+        return self._request_object(
+            "GET",
+            "/v1/context",
+            params={"query": query, "budget": budget},
+        )
+
     def apply_fix(self, failure_id: int, worked: bool = False) -> JsonObject:
         """Report that a retrieved fix was used, so its confidence is re-scored."""
         return self._request_object(
