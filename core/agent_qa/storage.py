@@ -450,6 +450,45 @@ class Storage:
         self._logger.info("failure_resolved", failure_id=failure_id)
         return result
 
+    def record_fix_application(
+        self,
+        failure_id: int,
+        worked: bool = False,
+    ) -> MemoryRecord:
+        """Count one use of a recorded fix and re-score it from the new evidence.
+
+        A fix is credited once per retrieval, and once again when the run that
+        retrieved it passes. That lets a repeated failure pull the score down
+        instead of leaving every diagnosis at full strength forever.
+        """
+        self._ensure_open()
+        failure_id = _ID_ADAPTER.validate_python(failure_id)
+        with self.engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    UPDATE failures
+                    SET times_applied = times_applied + 1,
+                        times_worked = times_worked + :worked,
+                        last_verified_at = CURRENT_TIMESTAMP
+                    WHERE id = :id
+                    """
+                ),
+                {"id": failure_id, "worked": 1 if worked else 0},
+            )
+            row = connection.execute(
+                text("SELECT * FROM failures WHERE id = :id"),
+                {"id": failure_id},
+            ).mappings().one_or_none()
+            result = _required_record(row, "Failure not found.")
+            result["confidence"] = confidence_score(result, datetime.now(UTC))
+        self._logger.info(
+            "fix_application_recorded",
+            failure_id=failure_id,
+            worked=worked,
+        )
+        return result
+
     def record_test_run(
         self,
         test_name: str,
@@ -693,13 +732,17 @@ _CONFIDENCE_HALF_LIFE_DAYS = 30.0
 
 
 def confidence_score(record: MemoryRecord, now: datetime) -> float:
-    """Score a prior fix as its success ratio decayed by the age of the evidence."""
+    """Score a prior fix as its success ratio decayed by the age of the evidence.
+
+    A fix never applied has never failed either, and a fix with only failures
+    behind it has never been shown to work. Both count the diagnosis itself as
+    the evidence behind it, so the score falls away as reports accumulate.
+    """
     applied_value = record.get("times_applied")
     worked_value = record.get("times_worked")
     applied = applied_value if _is_count(applied_value) else 0
     worked = worked_value if _is_count(worked_value) else 0
-    if applied <= 0:
-        return 0.0
+    ratio = (worked + 1) / (applied + 1)
 
     reference = (
         record.get("last_verified_at")
@@ -713,7 +756,7 @@ def confidence_score(record: MemoryRecord, now: datetime) -> float:
             0.0,
         )
         decay = 0.5 ** (age_days / _CONFIDENCE_HALF_LIFE_DAYS)
-    return (worked / applied) * decay
+    return ratio * decay
 
 
 def _is_count(value: JsonValue) -> TypeGuard[int]:

@@ -196,6 +196,7 @@ def pytest_runtest_makereport(
     section = _prior_failure_section(prior_failures)
     if section is not None:
         report.sections.append(("Agent QA memory", section))
+        _report_fix_application(client, prior_failures, item.nodeid)
 
     try:
         client.remember_failure(
@@ -273,18 +274,59 @@ _PLACEHOLDER_FIX = "Fix not recorded"
 _MATCH_RULE = "=" * 42
 
 
+def _diagnosed_failures(failures: list[JsonObject]) -> list[JsonObject]:
+    """Return the records whose diagnosis is real, in the order they arrived.
+
+    A record whose root cause or fix is still a placeholder carries no memory
+    worth showing, which is the case for failures first seen in this run.
+    """
+    return [
+        failure
+        for failure in failures
+        if str(failure.get("root_cause", "")) not in ("", _PLACEHOLDER_ROOT_CAUSE)
+        and str(failure.get("fix", "")) not in ("", _PLACEHOLDER_FIX)
+    ]
+
+
+def _failure_id(failure: JsonObject) -> int | None:
+    """Return a usable failure identifier, or None when the record has none."""
+    value = failure.get("id")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
+
+
+def _report_fix_application(
+    client: AgentQAClient,
+    failures: list[JsonObject],
+    test_name: str,
+) -> None:
+    """Count the retrieved fix as applied, so its confidence keeps moving.
+
+    The repeated failure is itself the evidence: the fix was applied by the
+    developer and the test came back. Reporting it here keeps the score falling
+    when a diagnosis does not hold, instead of leaving every one at full
+    strength forever.
+    """
+    diagnosed = _diagnosed_failures(failures)
+    if not diagnosed:
+        return
+    failure_id = _failure_id(diagnosed[0])
+    if failure_id is None:
+        return
+    try:
+        client.apply_fix(failure_id)
+    except PluginClientError as exc:
+        _log_client_failure("fix application", test_name, exc)
+
+
 def _prior_failure_section(failures: list[JsonObject]) -> str | None:
     """Build the terminal block shown when a diagnosed failure repeats.
 
     Returns None when no prior record carries a real diagnosis, which is the
     case for failures first seen in this run.
     """
-    diagnosed = [
-        failure
-        for failure in failures
-        if str(failure.get("root_cause", "")) not in ("", _PLACEHOLDER_ROOT_CAUSE)
-        and str(failure.get("fix", "")) not in ("", _PLACEHOLDER_FIX)
-    ]
+    diagnosed = _diagnosed_failures(failures)
     if not diagnosed:
         return None
 

@@ -299,6 +299,12 @@ class FailureResolve(RequestModel):
     fix: NonEmptyString
 
 
+class FixApplication(RequestModel):
+    """Report that a retrieved fix was used, and whether the run then passed."""
+
+    worked: bool = False
+
+
 class TestRunCreate(RequestModel):
     """Input for recording an execution and refreshing flaky statistics."""
 

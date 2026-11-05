@@ -113,6 +113,14 @@ class AgentQAClient:
             records.append(item)
         return records
 
+    def apply_fix(self, failure_id: int, worked: bool = False) -> JsonObject:
+        """Report that a retrieved fix was used, so its confidence is re-scored."""
+        return self._request_object(
+            "POST",
+            f"/v1/failures/{failure_id}/apply",
+            json={"worked": worked},
+        )
+
     def remember_fixture(
         self,
         name: str,

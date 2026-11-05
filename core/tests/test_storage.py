@@ -369,11 +369,13 @@ def test_resolve_missing_failure(storage: Storage) -> None:
 
 
 def test_similar_failures_report_confidence(storage: Storage) -> None:
-    """Confidence is zero until a fix is applied, then tracks worked over applied."""
+    """Confidence is full for an untried fix, then tracks worked over applied."""
     failure = _remember_failure(storage)
     signature = failure["error_signature"]
     assert isinstance(signature, str)
-    assert storage.find_similar_failures(signature)[0]["confidence"] == 0.0
+    fresh = storage.find_similar_failures(signature)[0]["confidence"]
+    assert isinstance(fresh, float)
+    assert round(fresh * 100) == 100
 
     with storage.engine.begin() as connection:
         connection.exec_driver_sql(
@@ -383,7 +385,37 @@ def test_similar_failures_report_confidence(storage: Storage) -> None:
 
     confidence = storage.find_similar_failures(signature)[0]["confidence"]
     assert isinstance(confidence, float)
-    assert 0.5 < confidence <= 0.75
+    assert 0.6 < confidence <= 0.8
+
+
+def test_recording_fix_applications_moves_confidence(storage: Storage) -> None:
+    """Each reported application is counted, and each report re-scores the fix."""
+    failure = _remember_failure(storage)
+    failure_id = _record_id(failure)
+    signature = failure["error_signature"]
+    assert isinstance(signature, str)
+
+    worked = storage.record_fix_application(failure_id, worked=True)
+
+    assert worked["times_applied"] == 1
+    assert worked["times_worked"] == 1
+    assert worked["last_verified_at"] is not None
+    assert worked["confidence"] == pytest.approx(1.0, abs=1e-6)
+
+    unworked = storage.record_fix_application(failure_id)
+
+    assert unworked["times_applied"] == 2
+    assert unworked["times_worked"] == 1
+    assert unworked["confidence"] == pytest.approx(2.0 / 3.0)
+
+    recorded = storage.find_similar_failures(signature)[0]["confidence"]
+    assert recorded == pytest.approx(2.0 / 3.0)
+
+
+def test_recording_fix_application_for_missing_failure(storage: Storage) -> None:
+    """An application report cannot silently create a missing failure."""
+    with pytest.raises(MemoryNotFoundError):
+        storage.record_fix_application(999)
 
 
 def test_record_test_run_refreshes_statistics(storage: Storage) -> None:

@@ -22,6 +22,7 @@ from agent_qa.models import (
     ContractCreate,
     FailureCreate,
     FailureResolve,
+    FixApplication,
     FixtureCreate,
     HealthResponse,
     QuarantineRequest,
@@ -308,6 +309,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             root_cause=body.root_cause,
             fix=body.fix,
         )
+
+    @application.post(
+        "/v1/failures/{failure_id}/apply",
+        response_model=MemoryRecord,
+        operation_id="apply_failure_fix",
+        tags=["Failures"],
+    )
+    def record_fix_application(
+        failure_id: Annotated[int, Path(gt=0)],
+        body: FixApplication,
+        storage: StorageDependency,
+    ) -> MemoryRecord:
+        """Count one use of a recorded fix so its confidence keeps moving.
+
+        Registered before the catch-all failure lookup so the literal path wins.
+        """
+        return storage.record_fix_application(failure_id=failure_id, worked=body.worked)
 
     @application.get(
         "/v1/failures/similar",

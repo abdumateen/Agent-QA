@@ -182,6 +182,48 @@ def test_pytest_plugin_records_failure_and_run(
     assert '"status":"failed"' in run_payload
 
 
+def test_pytest_plugin_reports_fix_application_and_confidence(
+    pytester: pytest.Pytester,
+) -> None:
+    """A repeat of a diagnosed failure reports the fix and shows its confidence."""
+    pytester.makepyfile(
+        test_sample="""
+        def test_failing():
+            raise AssertionError("expected value was not returned")
+        """
+    )
+
+    with respx.mock(base_url=BASE_URL, assert_all_called=True) as router:
+        router.get("/v1/failures/similar").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": 7,
+                        "root_cause": "Off-by-one in the page limit",
+                        "fix": "Use >=",
+                        "confidence": 1.0,
+                    }
+                ],
+            )
+        )
+        apply_route = router.post("/v1/failures/7/apply").mock(
+            return_value=httpx.Response(200, json={"id": 7, "times_applied": 1})
+        )
+        router.post("/v1/failures").mock(
+            return_value=httpx.Response(201, json={"id": 8})
+        )
+        router.post("/v1/test-runs").mock(
+            return_value=httpx.Response(201, json={"id": 9, "status": "failed"})
+        )
+        result = pytester.runpytest("--agent-qa-url", BASE_URL, "-q", "-rA")
+
+    result.assert_outcomes(failed=1)
+    assert apply_route.call_count == 1
+    assert apply_route.calls[0].request.content == b'{"worked":false}'
+    result.stdout.fnmatch_lines(["*Confidence: 100%*"])
+
+
 def test_pytest_plugin_supports_agent_qa_fixture(
     pytester: pytest.Pytester,
 ) -> None:
