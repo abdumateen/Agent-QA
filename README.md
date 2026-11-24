@@ -10,6 +10,8 @@ app_file: app.py
 pinned: false
 ---
 
+[![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/abdumateen/badge.svg)](https://hub.xerj.org/contributors/abdumateen)
+
 # Agent QA
 
 Agent QA is a local-first test memory service for teams and coding tools that
