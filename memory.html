@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent QA memory</title>
+<style>*{box-sizing:border-box}
+body{margin:0;background:#f6f7f9;color:#1c1f23;
+  font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+header{position:sticky;top:0;z-index:2;background:#101418;color:#f6f7f9;
+  padding:14px 20px;display:flex;gap:14px;align-items:baseline;flex-wrap:wrap}
+header h1{margin:0;font-size:16px;letter-spacing:.02em}
+header span{color:#9aa4af;font-size:13px}
+main{padding:20px;max-width:1080px;margin:0 auto;display:grid;gap:20px}
+section{background:#fff;border:1px solid #dfe3e8;border-radius:8px;overflow:hidden}
+h2{margin:0;font-size:13px;text-transform:uppercase;letter-spacing:.08em;
+  padding:12px 16px;border-bottom:1px solid #e7eaee;display:flex;
+  justify-content:space-between;color:#3b4249}
+h2 em{font-style:normal;color:#8b949e}
+input{width:100%;padding:10px 16px;border:0;border-bottom:1px solid #e7eaee;
+  font:inherit;outline:none}
+input:focus{background:#fbfcfd}
+.card{padding:12px 16px;border-bottom:1px solid #eef1f4}
+.card:last-child{border-bottom:0}
+.card[hidden]{display:none}
+.title{font-weight:600;word-break:break-word}
+dl{margin:8px 0 0;display:grid;grid-template-columns:auto 1fr;gap:2px 12px}
+dt{color:#79828b;font-size:12px}
+dd{margin:0;word-break:break-word;white-space:pre-wrap}
+.meter{margin-top:8px;height:5px;background:#e7eaee;border-radius:3px;overflow:hidden}
+.meter i{display:block;height:100%;background:#2f9e63}
+.pill{margin-left:8px;padding:1px 7px;border-radius:10px;font-size:11px;
+  background:#e7eaee;color:#3b4249}
+.pill.warn{background:#fbe3e3;color:#93262b}
+.empty{padding:12px 16px;color:#79828b}
+pre{margin:8px 0 0;padding:8px;background:#0f1317;color:#dfe6ed;border-radius:5px;
+  overflow-x:auto;font-size:12px}</style>
+</head><body>
+<header><h1>Agent QA memory</h1>
+<span>1 fixtures · 1 api contracts · 1 failures · 2 flaky tests · generated locally, no network requests</span></header>
+<main>
+<input id="filter" type="search" placeholder="Filter by any text on the page"
+ aria-label="Filter">
+<section id="fixtures"><h2>Fixtures<em>1</em></h2><article class="card" data-section="fixtures"><div class="title">pending-order</div><dl><dt>name</dt><dd>pending-order</dd></dl><details><summary>All fields</summary><pre>{
+  &quot;content&quot;: {
+    &quot;order_id&quot;: 42,
+    &quot;state&quot;: &quot;pending&quot;
+  },
+  &quot;created_at&quot;: &quot;2026-11-04T16:22:48Z&quot;,
+  &quot;hash&quot;: &quot;5f2da4990e1d8f86527e69c0516a1f20559cc18abfdad75579d750b3212a572a&quot;,
+  &quot;id&quot;: 1,
+  &quot;name&quot;: &quot;pending-order&quot;,
+  &quot;tags&quot;: [
+    &quot;orders&quot;
+  ],
+  &quot;type&quot;: &quot;http-response&quot;,
+  &quot;updated_at&quot;: &quot;2026-11-04T16:22:48Z&quot;
+}</pre></details></article></section>
+<section id="api_contracts"><h2>API contracts<em>1</em></h2><article class="card" data-section="api_contracts"><div class="title">POST /orders <em>· 201</em></div><dl><dt>endpoint</dt><dd>/orders</dd><dt>method</dt><dd>POST</dd><dt>status code</dt><dd>201</dd></dl><details><summary>All fields</summary><pre>{
+  &quot;created_at&quot;: &quot;2026-11-04T16:22:48Z&quot;,
+  &quot;endpoint&quot;: &quot;/orders&quot;,
+  &quot;id&quot;: 1,
+  &quot;method&quot;: &quot;POST&quot;,
+  &quot;request_schema&quot;: {
+    &quot;type&quot;: &quot;object&quot;
+  },
+  &quot;response_schema&quot;: {
+    &quot;type&quot;: &quot;object&quot;
+  },
+  &quot;status_code&quot;: 201,
+  &quot;tags&quot;: [
+    &quot;orders&quot;
+  ],
+  &quot;updated_at&quot;: &quot;2026-11-04T16:22:48Z&quot;
+}</pre></details></article></section>
+<section id="failures"><h2>Failures<em>1</em></h2><article class="card" data-section="failures"><div class="title">tests/test_orders.py::test_create<span class="pill">resolved</span></div><dl><dt>confidence</dt><dd>0.0</dd><dt>times applied</dt><dd>0</dd><dt>times worked</dt><dd>0</dd><dt>root cause</dt><dd>Readiness race</dd><dt>fix</dt><dd>Poll the readiness endpoint</dd><dt>test name</dt><dd>tests/test_orders.py::test_create</dd></dl><div class="meter" title="confidence"><i style="width:0%"></i></div><details><summary>All fields</summary><pre>{
+  &quot;confidence&quot;: 0.0,
+  &quot;created_at&quot;: &quot;2026-11-04T16:22:48Z&quot;,
+  &quot;error_message&quot;: &quot;Expected 201, received 503&quot;,
+  &quot;error_signature&quot;: &quot;860eb816754c5e4904c2eae958d1b210b4b580a96462e8b2f1846b85cdf5b1a6&quot;,
+  &quot;fix&quot;: &quot;Poll the readiness endpoint&quot;,
+  &quot;fix_commit&quot;: null,
+  &quot;fix_diff&quot;: null,
+  &quot;id&quot;: 1,
+  &quot;last_verified_at&quot;: null,
+  &quot;resolved&quot;: true,
+  &quot;resolved_at&quot;: &quot;2026-11-04T16:22:48Z&quot;,
+  &quot;root_cause&quot;: &quot;Readiness race&quot;,
+  &quot;stack_trace&quot;: &quot;test_orders.py:18: AssertionError&quot;,
+  &quot;tags&quot;: [],
+  &quot;test_name&quot;: &quot;tests/test_orders.py::test_create&quot;,
+  &quot;times_applied&quot;: 0,
+  &quot;times_worked&quot;: 0
+}</pre></details></article></section>
+<section id="flaky_tests"><h2>Flaky tests<em>2</em></h2><article class="card" data-section="flaky_tests"><div class="title">tests/test_orders.py::test_unstable <em>· pytest · score 1.0</em></div><dl><dt>test name</dt><dd>tests/test_orders.py::test_unstable</dd></dl><details><summary>All fields</summary><pre>{
+  &quot;consistently_failing&quot;: false,
+  &quot;fail_count&quot;: 2,
+  &quot;flaky_score&quot;: 1.0,
+  &quot;framework&quot;: &quot;pytest&quot;,
+  &quot;last_updated&quot;: &quot;2026-11-04T16:22:48Z&quot;,
+  &quot;quarantine_reason&quot;: null,
+  &quot;quarantined&quot;: false,
+  &quot;quarantined_at&quot;: null,
+  &quot;run_count&quot;: 4,
+  &quot;test_name&quot;: &quot;tests/test_orders.py::test_unstable&quot;
+}</pre></details></article><article class="card" data-section="flaky_tests"><div class="title">tests/test_broken.py::test_broken <em>· pytest · score 0.0</em><span class="pill warn">consistently failing</span></div><dl><dt>test name</dt><dd>tests/test_broken.py::test_broken</dd></dl><details><summary>All fields</summary><pre>{
+  &quot;consistently_failing&quot;: true,
+  &quot;fail_count&quot;: 4,
+  &quot;flaky_score&quot;: 0.0,
+  &quot;framework&quot;: &quot;pytest&quot;,
+  &quot;last_updated&quot;: &quot;2026-11-04T16:22:49Z&quot;,
+  &quot;quarantine_reason&quot;: null,
+  &quot;quarantined&quot;: false,
+  &quot;quarantined_at&quot;: null,
+  &quot;run_count&quot;: 4,
+  &quot;test_name&quot;: &quot;tests/test_broken.py::test_broken&quot;
+}</pre></details></article></section>
+</main>
+<script>const box = document.getElementById('filter');
+const cards = [...document.querySelectorAll('.card')];
+const sections = [...document.querySelectorAll('section')];
+box.addEventListener('input', () => {
+  const needle = box.value.trim().toLowerCase();
+  for (const card of cards) {
+    card.hidden = needle !== '' && !card.textContent.toLowerCase().includes(needle);
+  }
+  for (const section of sections) {
+    const shown = section.querySelectorAll('.card:not([hidden])').length;
+    section.hidden = needle !== '' && shown === 0;
+  }
+});</script>
+</body></html>

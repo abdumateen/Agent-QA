@@ -1,0 +1,80 @@
+[tool.poetry]
+name = "pytest-agent-qa"
+version = "0.1.0"
+description = "pytest integration for the Agent QA test memory service."
+authors = ["Agent QA Contributors <maintainers@agent-qa.dev>"]
+maintainers = ["Agent QA Contributors <maintainers@agent-qa.dev>"]
+license = "MIT"
+packages = [{ include = "pytest_agent_qa" }]
+keywords = ["pytest", "testing", "fixtures", "failures", "flaky-tests"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: Pytest",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Testing",
+]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+pytest = ">=8.3,<9.0"
+httpx = ">=0.27,<1.0"
+pydantic = ">=2.9,<3.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest-cov = ">=5.0,<7.0"
+respx = ">=0.21,<1.0"
+ruff = ">=0.9,<1.0"
+mypy = ">=1.13,<2.0"
+
+[tool.poetry.plugins.pytest11]
+agent_qa = "pytest_agent_qa.plugin"
+
+[build-system]
+requires = ["poetry-core>=1.9,<3.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+minversion = "8.3"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+branch = true
+source = ["pytest_agent_qa"]
+relative_files = true
+
+[tool.coverage.report]
+show_missing = true
+precision = 2
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["pytest_agent_qa", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "PIE", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pytest_agent_qa"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.11"
+files = ["pytest_agent_qa", "tests"]
+strict = true
+pretty = true
+show_error_codes = true
+warn_unreachable = true
